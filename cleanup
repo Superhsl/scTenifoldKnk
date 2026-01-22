@@ -1,0 +1,6 @@
+#!/bin/sh
+# Cleanup script for scTenifoldKnk package
+# This removes compiled objects before re-building
+
+cd src
+rm -f *.o *.so *.dll

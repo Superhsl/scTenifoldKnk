@@ -1,0 +1,6 @@
+@echo off
+REM Cleanup script for scTenifoldKnk package on Windows
+REM This removes compiled objects before re-building
+
+cd src
+del /Q *.o *.so *.dll 2>nul
