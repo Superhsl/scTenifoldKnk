@@ -11,7 +11,7 @@
 #' @param scaleScores A boolean value (TRUE/FALSE), if TRUE, the weights will be normalized such that
 #' the maximum absolute value is 1.
 #' @param symmetric A boolean value (TRUE/FALSE), if TRUE, the weights matrix returned will be symmetric.
-#' @param q A decimal value between 0 and 1. Defines the cut-off threshold of top q% relationships to be returned.
+#' @param q A decimal value between 0 and 1. Defines the cut-off threshold of top q percent relationships to be returned.
 #' @param verbose A boolean value (TRUE/FALSE), if TRUE, progress information is shown.
 #' @param nCores An integer value. Defines the number of cores for BLAS operations (not for parallelization).
 #' @param use_approximate Logical. If TRUE, uses approximate method (faster but less accurate). Default FALSE.

@@ -25,7 +25,7 @@ the maximum absolute value is 1.}
 
 \item{symmetric}{A boolean value (TRUE/FALSE), if TRUE, the weights matrix returned will be symmetric.}
 
-\item{q}{A decimal value between 0 and 1. Defines the cut-off threshold of top q% relationships to be returned.}
+\item{q}{A decimal value between 0 and 1. Defines the cut-off threshold of top q percent relationships to be returned.}
 
 \item{verbose}{A boolean value (TRUE/FALSE), if TRUE, progress information is shown.}
 
