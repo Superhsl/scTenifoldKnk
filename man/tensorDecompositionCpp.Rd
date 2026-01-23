@@ -13,19 +13,28 @@ tensorDecompositionCpp(
 )
 }
 \arguments{
-\item{networkList}{List of network matrices}
+\item{networkList}{List of network matrices (can be sparse or dense)}
 
-\item{K}{Rank of decomposition}
+\item{K}{Rank of CP decomposition (number of components)}
 
-\item{maxIter}{Maximum iterations}
+\item{maxIter}{Maximum number of ALS iterations}
 
-\item{maxError}{Convergence threshold}
+\item{maxError}{Convergence threshold (relative Frobenius norm)}
 
-\item{nDecimal}{Decimal places for output}
+\item{nDecimal}{Decimal places for rounding output (0 = no rounding)}
 }
 \value{
-List with reconstructed network and factors
+List containing:
+  - X: reconstructed average network
+  - A, B, C: factor matrices
+  - iterations: number of iterations performed
+  - error: final reconstruction error
 }
 \description{
 CP Tensor Decomposition with C++ acceleration
+}
+\details{
+Uses Alternating Least Squares (ALS) to compute CP decomposition
+of the 3-way tensor formed by stacking network matrices. The reconstructed
+network is a weighted average of the network slices.
 }

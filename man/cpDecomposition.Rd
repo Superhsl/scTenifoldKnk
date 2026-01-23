@@ -4,20 +4,36 @@
 \alias{cpDecomposition}
 \title{Canonical Polyadic Decomposition}
 \usage{
-cpDecomposition(tnsr, num_components = NULL, max_iter = 25, tol = 1e-05)
+cpDecomposition(
+  tnsr,
+  num_components = NULL,
+  max_iter = 25,
+  tol = 1e-05,
+  verbose = FALSE
+)
 }
 \arguments{
-\item{tnsr}{Tensor with K modes}
+\item{tnsr}{Tensor object with K modes (created by as.tensor)}
 
-\item{num_components}{the number of rank-1 K-Tensors to use in approximation}
+\item{num_components}{The number of rank-1 tensors (CP rank)}
 
-\item{max_iter}{maximum number of iterations if error stays above tol}
+\item{max_iter}{Maximum number of ALS iterations (default: 25)}
 
-\item{tol}{relative Frobenius norm error tolerance}
+\item{tol}{Relative Frobenius norm error tolerance (default: 1e-5)}
+
+\item{verbose}{Logical. If TRUE, show progress bar (default: FALSE)}
 }
 \value{
-a list containing decomposition results
+A list containing:
+  \item{lambdas}{Component weights}
+  \item{U}{List of factor matrices}
+  \item{conv}{Logical, whether algorithm converged}
+  \item{est}{Reconstructed tensor}
+  \item{norm_percent}{Percentage of norm captured}
+  \item{fnorm_resid}{Final residual norm}
 }
 \description{
-CP decomposition of a tensor using Alternating Least Squares
+CP decomposition of a tensor using Alternating Least Squares (ALS).
+This is the pure R implementation used as fallback when C++ version is unavailable.
 }
+\keyword{internal}

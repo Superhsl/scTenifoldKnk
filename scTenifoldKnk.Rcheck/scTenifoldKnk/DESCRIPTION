@@ -1,0 +1,49 @@
+Package: scTenifoldKnk
+Type: Package
+Title: In-Silico Knockout Experiments from Single-Cell Gene Regulatory
+        Networks
+Version: 2.1.0
+Author: Zaoqu Liu [ctb, cre], Daniel Osorio [aut], Yan Zhong [aut, ctb], 
+    Guanxun Li [aut, ctb], Qian Xu [aut, ctb], Andrew Hillhouse [aut, ctb],
+    Jingshu Chen [aut, ctb], Laurie Davidson [aut, ctb], Yanan Tian [aut, ctb],
+    Robert Chapkin [aut, ctb], Jianhua Huang [aut, ctb], James Cai [aut, ctb, ths]
+Maintainer: Zaoqu Liu <liuzaoqu@163.com>
+Authors@R: c(person(given = "Zaoqu", family = "Liu", email = "liuzaoqu@163.com", role = c("ctb", "cre"), comment = c(ORCID = '0000-0002-0452-742X')),
+              person(given = "Daniel", family = "Osorio", email = "dcosorioh@tamu.edu", role = c("aut"), comment = c(ORCID = '0000-0003-4424-8422')),
+              person(given = "Yan", family = "Zhong", role = c("aut","ctb")),
+              person(given = "Guanxun", family = "Li", role = c("aut","ctb")),
+              person(given = "Qian", family = "Xu", role = c("aut","ctb")),
+              person(given = "Andrew", family = "Hillhouse", role = c("aut","ctb")),
+              person(given = "Jingshu", family = "Chen", role = c("aut","ctb")),
+              person(given = "Laurie", family = "Davidson", role = c("aut","ctb")),
+              person(given = "Yanan", family = "Tian", role = c("aut","ctb")),
+              person(given = "Robert", family = "Chapkin", role = c("aut","ctb")),
+              person(given = "Jianhua", family = "Huang", role = c("aut","ctb")),
+              person(given = "James", family = "Cai", role = c("aut", "ctb", "ths"), comment = c(ORCID = '0000-0002-8081-6725'))
+              )
+Description: A workflow based on 'scTenifoldNet' to perform in-silico knockout 
+    experiments using single-cell RNA sequencing (scRNA-seq) data from wild-type 
+    (WT) control samples as input. First, the package constructs a single-cell 
+    gene regulatory network (scGRN) and knocks out a target gene from the 
+    adjacency matrix of the WT scGRN by setting the gene's outdegree edges to 
+    zero. Then, it compares the knocked out scGRN with the WT scGRN to identify 
+    differentially regulated genes, called virtual-knockout perturbed genes, 
+    which are used to assess the impact of the gene knockout and reveal the 
+    gene's function in the analyzed cells. This version includes C++ acceleration 
+    with Eigen library, cross-platform compatibility (macOS, Linux, Windows), 
+    and Seurat v4/v5 support.
+URL: https://zaoqu-liu.github.io/scTenifoldKnk/,
+        https://github.com/Zaoqu-Liu/scTenifoldKnk
+BugReports: https://github.com/Zaoqu-Liu/scTenifoldKnk/issues
+License: GPL (>= 2)
+Encoding: UTF-8
+RoxygenNote: 7.3.3
+Imports: Matrix, RSpectra, MASS, stats, parallel, methods, Rcpp,
+        RcppEigen, utils
+LinkingTo: Rcpp, RcppEigen
+Suggests: testthat (>= 2.1.0), SeuratObject, knitr, rmarkdown
+VignetteBuilder: knitr
+SystemRequirements: GNU make
+NeedsCompilation: yes
+Packaged: 2026-01-23 08:09:12 UTC; liuzaoqu
+Built: R 4.4.0; aarch64-apple-darwin20; 2026-01-23 08:09:33 UTC; unix

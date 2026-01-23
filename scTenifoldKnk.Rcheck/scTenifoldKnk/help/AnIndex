@@ -1,0 +1,15 @@
+cpDecomposition	cpDecomposition
+dRegulation	dRegulation
+dRegulationCpp	dRegulationCpp
+knockoutGeneCpp	knockoutGeneCpp
+makeNetworksCpp	makeNetworksCpp
+makeNetworksFast	makeNetworksFast
+manifoldAlignment	manifoldAlignment
+pcNetFast	pcNetFast
+scQC	scQC
+scTenifoldKnk	scTenifoldKnk
+sparseToDenseTranspose	sparseToDenseTranspose
+strictDirection	strictDirection
+strictDirectionCpp	strictDirectionCpp
+tensorDecomposition	tensorDecomposition
+tensorDecompositionCpp	tensorDecompositionCpp

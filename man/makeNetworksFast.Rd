@@ -2,7 +2,7 @@
 % Please edit documentation in R/makeNetworksFast.R
 \name{makeNetworksFast}
 \alias{makeNetworksFast}
-\title{Optimized parallel construction of multiple gene regulatory networks}
+\title{Construction of multiple gene regulatory networks}
 \usage{
 makeNetworksFast(
   X,
@@ -20,44 +20,37 @@ makeNetworksFast(
 \arguments{
 \item{X}{A filtered and normalized gene expression matrix with cells as columns and genes as rows.}
 
-\item{nNet}{An integer value. The number of networks based on principal components regression to generate.}
+\item{nNet}{An integer value. The number of networks to generate (default: 10).}
 
-\item{nCells}{An integer value. The number of cells to subsample each time to generate a network.}
+\item{nCells}{An integer value. The number of cells to subsample for each network (default: 500).}
 
-\item{nComp}{An integer value. The number of principal components in PCA to generate the networks.
-Should be greater than 2 and lower than the total number of genes.}
+\item{nComp}{An integer value. The number of principal components (default: 3).
+Must be >= 2 and < number of genes.}
 
-\item{scaleScores}{A boolean value (TRUE/FALSE), if TRUE, the weights will be normalized such that
-the maximum absolute value is 1.}
+\item{scaleScores}{Logical. If TRUE, normalize weights so max absolute value is 1.}
 
-\item{symmetric}{A boolean value (TRUE/FALSE), if TRUE, the weights matrix returned will be symmetric.}
+\item{symmetric}{Logical. If TRUE, return symmetric network matrices.}
 
-\item{q}{A decimal value between 0 and 1. Represent the cut-off threshold of top q% relationships to be returned.}
+\item{q}{A decimal value between 0 and 1. Quantile threshold for edge filtering.}
 
-\item{nCores}{An integer value. Defines the number of cores to be used for parallel processing.
-Default is to use all available cores minus 1.}
+\item{nCores}{An integer value. Number of cores for parallel processing. Set to 1 for sequential.
+Default: detectCores() - 1.}
 
-\item{verbose}{A boolean value (TRUE/FALSE), if TRUE, progress information is shown.}
+\item{verbose}{Logical. If TRUE, print progress information.}
 
 \item{seed}{An integer value. Random seed for reproducibility. If NULL, no seed is set.}
 }
 \value{
-A list with nNet gene regulatory networks in dgCMatrix format. Each one computed from a
-randomly selected subsample of nCells cells.
+A list of nNet gene regulatory networks in dgCMatrix format.
 }
 \description{
 Computes multiple gene regulatory networks from random subsamples of cells using
-optimized principal component regression with parallel processing. This function achieves
-8-10x speedup through parallelization and 30-50x speedup from the optimized pcNetFast algorithm.
+principal component regression. Supports both sequential and parallel processing.
 }
 \details{
-This function parallelizes the network construction process by:
-\enumerate{
-\item Creating multiple random subsamples of cells (with replacement)
-\item Building each network independently in parallel using pcNetFast
-\item Combining results into a list
-}
-The parallelization is safe because each network is constructed independently.
+Each network is constructed independently from a random subsample of cells,
+making the process embarrassingly parallel. The function automatically chooses
+sequential processing for small datasets where parallel overhead exceeds benefits.
 }
 \examples{
 library(scTenifoldKnk)
@@ -73,13 +66,9 @@ rownames(X) <- paste0("gene", 1:nGenes)
 # Quality control
 X <- X[rowSums(X) > 0, ]
 
-# Generate multiple networks in parallel
+# Generate networks (sequential for small data)
 networks <- makeNetworksFast(
   X = X, nNet = 10, nCells = 500, nComp = 3,
   scaleScores = TRUE, symmetric = FALSE, q = 0.95
 )
-
-# Check results
-length(networks)
-networks[[1]][1:10, 1:10]
 }

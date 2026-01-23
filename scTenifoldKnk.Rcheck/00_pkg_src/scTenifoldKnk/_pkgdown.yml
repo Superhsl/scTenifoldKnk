@@ -1,0 +1,131 @@
+url: https://zaoqu-liu.github.io/scTenifoldKnk/
+
+template:
+  bootstrap: 5
+  bootswatch: flatly
+  bslib:
+    primary: "#0d6efd"
+    border-radius: 0.5rem
+    btn-border-radius: 0.25rem
+
+home:
+  title: scTenifoldKnk - Virtual Knockout Experiments
+  description: >
+    In-silico knockout experiments using single-cell gene regulatory networks.
+    Predict gene knockout effects without wet-lab experiments.
+
+authors:
+  Zaoqu Liu:
+    href: https://github.com/Zaoqu-Liu
+  Daniel Osorio:
+    href: https://github.com/dosorio
+
+navbar:
+  structure:
+    left: [intro, reference, articles, news]
+    right: [search, github]
+  components:
+    intro:
+      text: Get Started
+      href: articles/quick-start.html
+    reference:
+      text: Reference
+      href: reference/index.html
+    articles:
+      text: Articles
+      menu:
+        - text: "Getting Started"
+        - text: Quick Start Guide
+          href: articles/quick-start.html
+        - text: "---"
+        - text: "Theory & Methods"
+        - text: Algorithm Theory
+          href: articles/algorithm-theory.html
+        - text: "---"
+        - text: "Tutorials"
+        - text: Visualization Guide
+          href: articles/visualization.html
+        - text: Advanced Usage
+          href: articles/advanced-usage.html
+        - text: Result Interpretation
+          href: articles/interpretation.html
+    github:
+      icon: fab fa-github
+      href: https://github.com/Zaoqu-Liu/scTenifoldKnk
+      aria-label: GitHub
+
+articles:
+  - title: Getting Started
+    navbar: ~
+    contents:
+      - quick-start
+
+  - title: Theory & Methods
+    navbar: ~
+    contents:
+      - algorithm-theory
+
+  - title: Tutorials
+    navbar: ~
+    contents:
+      - visualization
+      - advanced-usage
+      - interpretation
+
+reference:
+  - title: Main Functions
+    desc: Core analysis functions
+    contents:
+      - scTenifoldKnk
+      - scQC
+
+  - title: Network Construction
+    desc: Build gene regulatory networks
+    contents:
+      - pcNetFast
+      - makeNetworksFast
+      - makeNetworksCpp
+
+  - title: Analysis Components
+    desc: Individual analysis steps
+    contents:
+      - tensorDecomposition
+      - tensorDecompositionCpp
+      - manifoldAlignment
+      - dRegulation
+      - dRegulationCpp
+
+  - title: Utilities
+    desc: Helper functions
+    contents:
+      - strictDirection
+      - strictDirectionCpp
+      - knockoutGeneCpp
+      - sparseToDenseTranspose
+
+  - title: Internal
+    desc: Internal functions (CP decomposition fallback)
+    contents:
+      - cpDecomposition
+
+footer:
+  structure:
+    left: developed_by
+    right: built_with
+  components:
+    developed_by: >
+      Developed by [Zaoqu Liu](https://github.com/Zaoqu-Liu) 
+      and [Daniel Osorio](https://github.com/dosorio).
+    built_with: >
+      Built with [pkgdown](https://pkgdown.r-lib.org/).
+
+news:
+  releases:
+    - text: "Version 2.1.0"
+      href: news/index.html
+
+repo:
+  url:
+    home: https://github.com/Zaoqu-Liu/scTenifoldKnk
+    source: https://github.com/Zaoqu-Liu/scTenifoldKnk/blob/main/
+    issue: https://github.com/Zaoqu-Liu/scTenifoldKnk/issues/

@@ -28,13 +28,18 @@ makeNetworksCpp(
 
 \item{symmetric}{Whether to make networks symmetric}
 
-\item{nThreads}{Number of threads (0 = auto)}
+\item{nThreads}{Number of threads (ignored, kept for API compatibility)}
 
 \item{countMatrix}{Gene expression matrix (genes x cells)}
 }
 \value{
-List of networks
+List of sparse network matrices
 }
 \description{
 Build multiple gene regulatory networks with C++ acceleration
+}
+\details{
+Each network is built from a random subsample of cells using
+principal component regression. Networks are returned as sparse matrices
+for memory efficiency.
 }

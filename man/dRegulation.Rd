@@ -7,13 +7,21 @@
 dRegulation(manifoldOutput, gKO)
 }
 \arguments{
-\item{manifoldOutput}{Manifold alignment output}
+\item{manifoldOutput}{Manifold alignment output matrix (2*nGenes x d dimensions)}
 
-\item{gKO}{Knocked out gene name}
+\item{gKO}{Character vector of knocked out gene name(s)}
 }
 \value{
-Data frame with differential regulation results
+Data frame with columns: gene, distance, Z, FC, p.value, p.adj
 }
 \description{
-Computes differential regulation between aligned manifolds
+Computes differential regulation between aligned manifolds using
+distance-based statistics. Identifies genes whose regulatory relationships
+are most affected by the virtual knockout.
+}
+\details{
+The fold change (FC) is computed as the squared distance of each gene
+divided by the mean squared distance of all OTHER genes (excluding the knocked
+out gene). P-values are computed using chi-square distribution (df=1) and
+adjusted using Benjamini-Hochberg FDR correction.
 }

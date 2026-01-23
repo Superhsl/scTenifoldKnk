@@ -1,0 +1,429 @@
+
+R version 4.4.0 (2024-04-24) -- "Puppy Cup"
+Copyright (C) 2024 The R Foundation for Statistical Computing
+Platform: aarch64-apple-darwin20
+
+R is free software and comes with ABSOLUTELY NO WARRANTY.
+You are welcome to redistribute it under certain conditions.
+Type 'license()' or 'licence()' for distribution details.
+
+R is a collaborative project with many contributors.
+Type 'contributors()' for more information and
+'citation()' on how to cite R or R packages in publications.
+
+Type 'demo()' for some demos, 'help()' for on-line help, or
+'help.start()' for an HTML browser interface to help.
+Type 'q()' to quit R.
+
+> # Comprehensive Testing Suite for scTenifoldKnk v2.1.0
+> # Tests scientific accuracy, numerical stability, and correctness
+> 
+> library(scTenifoldKnk)
+> library(Matrix)
+> 
+> cat("========================================\n")
+========================================
+> cat("  COMPREHENSIVE TESTING SUITE\n")
+  COMPREHENSIVE TESTING SUITE
+> cat("  scTenifoldKnk v2.1.0\n")
+  scTenifoldKnk v2.1.0
+> cat("========================================\n\n")
+========================================
+
+> 
+> passed <- 0
+> failed <- 0
+> 
+> test <- function(name, expr) {
++   cat(sprintf("Testing: %s ... ", name))
++   result <- tryCatch({
++     if (isTRUE(expr)) {
++       cat("PASSED\n")
++       passed <<- passed + 1
++       TRUE
++     } else {
++       cat("FAILED\n")
++       failed <<- failed + 1
++       FALSE
++     }
++   }, error = function(e) {
++     cat(sprintf("ERROR: %s\n", e$message))
++     failed <<- failed + 1
++     FALSE
++   })
++ }
+> 
+> # ============================================================
+> # 1. SCIENTIFIC ACCURACY TESTS
+> # ============================================================
+> cat("=== 1. SCIENTIFIC ACCURACY TESTS ===\n\n")
+=== 1. SCIENTIFIC ACCURACY TESTS ===
+
+> 
+> # Test 1.1: FC calculation - most critical scientific test
+> cat("Test 1.1: FC calculation correctness\n")
+Test 1.1: FC calculation correctness
+> set.seed(42)
+> nGenes <- 10
+> mockManifold <- matrix(rnorm(nGenes * 2 * 2), nrow = nGenes * 2, ncol = 2)
+> geneNames <- paste0("G", 1:nGenes)
+> rownames(mockManifold) <- c(paste0("X_", geneNames), paste0("Y_", geneNames))
+> 
+> # Make G5 have the largest distance (knockout gene)
+> mockManifold[5, ] <- c(0, 0)       # X_G5
+> mockManifold[15, ] <- c(10, 10)    # Y_G5 - large distance
+> 
+> result <- dRegulation(mockManifold, "G5")
+> 
+> # G5 should be the top gene (highest distance)
+> test("G5 is top gene (highest distance)", result$gene[1] == "G5")
+Testing: G5 is top gene (highest distance) ... PASSED
+> 
+> # Verify FC formula: FC = d^2 / mean(d^2 excluding KO)
+> distances <- sqrt(rowSums((mockManifold[1:nGenes, , drop = FALSE] - 
++                            mockManifold[(nGenes+1):(2*nGenes), , drop = FALSE])^2))
+> names(distances) <- geneNames
+> d_G5 <- distances["G5"]
+> mean_other_sq <- mean(distances[names(distances) != "G5"]^2)
+> expected_FC_G5 <- (d_G5^2) / mean_other_sq
+> actual_FC_G5 <- result$FC[result$gene == "G5"]
+> 
+> cat(sprintf("  Expected FC for G5: %.4f\n", expected_FC_G5))
+  Expected FC for G5: 26.7875
+> cat(sprintf("  Actual FC for G5:   %.4f\n", actual_FC_G5))
+  Actual FC for G5:   26.7875
+> test("FC formula mathematically correct", 
++      abs(expected_FC_G5 - actual_FC_G5) / expected_FC_G5 < 0.01)
+Testing: FC formula mathematically correct ... PASSED
+> 
+> cat("\n")
+
+> 
+> # Test 1.2: Distance calculation accuracy
+> cat("Test 1.2: Euclidean distance calculation\n")
+Test 1.2: Euclidean distance calculation
+> testManifold <- matrix(0, nrow = 4, ncol = 2)
+> rownames(testManifold) <- c("X_A", "X_B", "Y_A", "Y_B")
+> testManifold["X_A", ] <- c(0, 0)
+> testManifold["Y_A", ] <- c(3, 4)  # Distance = 5 (3-4-5 triangle)
+> testManifold["X_B", ] <- c(0, 0)
+> testManifold["Y_B", ] <- c(1, 0)  # Distance = 1
+> 
+> result2 <- dRegulation(testManifold, "A")
+> dist_A <- result2$distance[result2$gene == "A"]
+> dist_B <- result2$distance[result2$gene == "B"]
+> 
+> cat(sprintf("  Distance A: %.6f (expected: 5)\n", dist_A))
+  Distance A: 5.000000 (expected: 5)
+> cat(sprintf("  Distance B: %.6f (expected: 1)\n", dist_B))
+  Distance B: 1.000000 (expected: 1)
+> test("Distance A = 5 (3-4-5 triangle)", abs(dist_A - 5) < 0.0001)
+Testing: Distance A = 5 (3-4-5 triangle) ... PASSED
+> test("Distance B = 1", abs(dist_B - 1) < 0.0001)
+Testing: Distance B = 1 ... PASSED
+> 
+> cat("\n")
+
+> 
+> # Test 1.3: p-value validity
+> cat("Test 1.3: Statistical test validity\n")
+Test 1.3: Statistical test validity
+> test("p-values in [0,1]", all(result$p.value >= 0 & result$p.value <= 1))
+Testing: p-values in [0,1] ... PASSED
+> test("adjusted p-values in [0,1]", all(result$p.adj >= 0 & result$p.adj <= 1))
+Testing: adjusted p-values in [0,1] ... PASSED
+> test("FDR adjustment: p.adj >= p.value", all(result$p.adj >= result$p.value - 1e-10))
+Testing: FDR adjustment: p.adj >= p.value ... PASSED
+> 
+> # ============================================================
+> # 2. NETWORK CONSTRUCTION TESTS
+> # ============================================================
+> cat("\n=== 2. NETWORK CONSTRUCTION TESTS ===\n\n")
+
+=== 2. NETWORK CONSTRUCTION TESTS ===
+
+> 
+> cat("Test 2.1: pcNetFast basic functionality\n")
+Test 2.1: pcNetFast basic functionality
+> set.seed(123)
+> X <- matrix(rpois(1000, lambda = 5), nrow = 50, ncol = 20)
+> rownames(X) <- paste0("gene", 1:50)
+> X <- X[rowSums(X) > 0, ]
+> 
+> net <- pcNetFast(X, nComp = 3, scaleScores = TRUE, q = 0.9, verbose = FALSE)
+> test("Network is square", nrow(net) == ncol(net))
+Testing: Network is square ... PASSED
+> test("Network diagonal is zero", sum(abs(Matrix::diag(net))) < 1e-10)
+Testing: Network diagonal is zero ... PASSED
+> test("Network is sparse dgCMatrix", inherits(net, "dgCMatrix"))
+Testing: Network is sparse dgCMatrix ... PASSED
+> test("Gene names preserved", all(rownames(net) == rownames(X)))
+Testing: Gene names preserved ... PASSED
+> test("Weights normalized to [-1,1]", max(abs(net)) <= 1 + 1e-10)
+Testing: Weights normalized to [-1,1] ... PASSED
+> 
+> cat("\n")
+
+> 
+> cat("Test 2.2: Symmetric network option\n")
+Test 2.2: Symmetric network option
+> net_sym <- pcNetFast(X, nComp = 3, symmetric = TRUE, verbose = FALSE)
+> net_dense <- as.matrix(net_sym)
+> test("Symmetric: A[i,j] = A[j,i]", max(abs(net_dense - t(net_dense))) < 1e-10)
+Testing: Symmetric: A[i,j] = A[j,i] ... PASSED
+> 
+> cat("\n")
+
+> 
+> cat("Test 2.3: makeNetworksFast\n")
+Test 2.3: makeNetworksFast
+> networks <- makeNetworksFast(X, nNet = 3, nCells = 15, nComp = 3, 
++                               nCores = 1, verbose = FALSE, seed = 42)
+> test("Correct number of networks", length(networks) == 3)
+Testing: Correct number of networks ... PASSED
+> test("All networks are sparse matrices", all(sapply(networks, inherits, "dgCMatrix")))
+Testing: All networks are sparse matrices ... PASSED
+> test("All networks have correct dimensions", 
++      all(sapply(networks, nrow) == nrow(X)) && all(sapply(networks, ncol) == nrow(X)))
+Testing: All networks have correct dimensions ... PASSED
+> 
+> cat("\n")
+
+> 
+> cat("Test 2.4: Reproducibility with seed\n")
+Test 2.4: Reproducibility with seed
+> nets1 <- makeNetworksFast(X, nNet = 2, nCells = 15, nComp = 3, 
++                           nCores = 1, verbose = FALSE, seed = 999)
+> nets2 <- makeNetworksFast(X, nNet = 2, nCells = 15, nComp = 3, 
++                           nCores = 1, verbose = FALSE, seed = 999)
+> diff1 <- sum(abs(nets1[[1]] - nets2[[1]]))
+> diff2 <- sum(abs(nets1[[2]] - nets2[[2]]))
+> cat(sprintf("  Difference net1: %.10f\n", diff1))
+  Difference net1: 0.0000000000
+> cat(sprintf("  Difference net2: %.10f\n", diff2))
+  Difference net2: 0.0000000000
+> test("Reproducible with same seed", diff1 < 1e-10 && diff2 < 1e-10)
+Testing: Reproducible with same seed ... PASSED
+> 
+> # ============================================================
+> # 3. TENSOR DECOMPOSITION TESTS
+> # ============================================================
+> cat("\n=== 3. TENSOR DECOMPOSITION TESTS ===\n\n")
+
+=== 3. TENSOR DECOMPOSITION TESTS ===
+
+> 
+> cat("Test 3.1: tensorDecomposition with C++\n")
+Test 3.1: tensorDecomposition with C++
+> td_result <- tensorDecomposition(networks, K = 2, maxIter = 50, 
++                                   nDecimal = 3, useCpp = TRUE)
+> test("Output contains X matrix", !is.null(td_result$X))
+Testing: Output contains X matrix ... PASSED
+> test("X is sparse Matrix", inherits(td_result$X, "Matrix"))
+Testing: X is sparse Matrix ... PASSED
+> test("X has correct dimensions", 
++      nrow(td_result$X) == nrow(X) && ncol(td_result$X) == nrow(X))
+Testing: X has correct dimensions ... PASSED
+> test("X normalized to [-1,1]", max(abs(td_result$X)) <= 1 + 1e-10)
+Testing: X normalized to [-1,1] ... PASSED
+> 
+> # ============================================================
+> # 4. MANIFOLD ALIGNMENT TESTS
+> # ============================================================
+> cat("\n=== 4. MANIFOLD ALIGNMENT TESTS ===\n\n")
+
+=== 4. MANIFOLD ALIGNMENT TESTS ===
+
+> 
+> cat("Test 4.1: manifoldAlignment\n")
+Test 4.1: manifoldAlignment
+> X_net <- td_result$X
+> Y_net <- td_result$X  
+> Y_net[1, ] <- 0  # Knockout first gene
+> 
+> ma_result <- manifoldAlignment(X_net, Y_net, d = 2)
+> test("Manifold has 2*nGenes rows", nrow(ma_result) == 2 * nrow(X_net))
+Testing: Manifold has 2*nGenes rows ... PASSED
+> test("Manifold has d columns", ncol(ma_result) == 2)
+Testing: Manifold has d columns ... PASSED
+> test("Row names have X_/Y_ prefix", all(grepl("^X_|^Y_", rownames(ma_result))))
+Testing: Row names have X_/Y_ prefix ... PASSED
+> 
+> # ============================================================
+> # 5. STRICT DIRECTION TESTS
+> # ============================================================
+> cat("\n=== 5. STRICT DIRECTION TESTS ===\n\n")
+
+=== 5. STRICT DIRECTION TESTS ===
+
+> 
+> cat("Test 5.1: strictDirection logic (internal function)\n")
+Test 5.1: strictDirection logic (internal function)
+> # Using byrow=TRUE to ensure expected matrix layout
+> testMat <- matrix(c(0, 0.8, 0.3,
++                     0.5, 0, 0.9,
++                     0.2, 0.4, 0), nrow = 3, byrow = TRUE)
+> rownames(testMat) <- colnames(testMat) <- c("A", "B", "C")
+> 
+> # Access internal function using ::: 
+> directed <- scTenifoldKnk:::strictDirection(testMat, lambda = 1)
+> directed_dense <- as.matrix(directed)
+> 
+> # Logic: keep |X[i,j]| > |X[j,i]|, zero the other
+> # A->B=0.8 vs B->A=0.5: keep A->B (0.8 > 0.5)
+> # A->C=0.3 vs C->A=0.2: keep A->C (0.3 > 0.2)
+> # B->C=0.9 vs C->B=0.4: keep B->C (0.9 > 0.4)
+> cat(sprintf("  A->B: %.2f (should be 0.8)\n", directed_dense[1,2]))
+  A->B: 0.80 (should be 0.8)
+> cat(sprintf("  B->A: %.2f (should be 0)\n", directed_dense[2,1]))
+  B->A: 0.00 (should be 0)
+> cat(sprintf("  B->C: %.2f (should be 0.9)\n", directed_dense[2,3]))
+  B->C: 0.90 (should be 0.9)
+> cat(sprintf("  C->B: %.2f (should be 0)\n", directed_dense[3,2]))
+  C->B: 0.00 (should be 0)
+> 
+> test("Stronger edge A->B kept", directed_dense[1,2] == 0.8)
+Testing: Stronger edge A->B kept ... PASSED
+> test("Weaker edge B->A zeroed", directed_dense[2,1] == 0)
+Testing: Weaker edge B->A zeroed ... PASSED
+> test("Stronger edge B->C kept", directed_dense[2,3] == 0.9)
+Testing: Stronger edge B->C kept ... PASSED
+> test("Weaker edge C->B zeroed", directed_dense[3,2] == 0)
+Testing: Weaker edge C->B zeroed ... PASSED
+> 
+> # ============================================================
+> # 6. QUALITY CONTROL TESTS
+> # ============================================================
+> cat("\n=== 6. QUALITY CONTROL TESTS ===\n\n")
+
+=== 6. QUALITY CONTROL TESTS ===
+
+> 
+> cat("Test 6.1: scQC basic\n")
+Test 6.1: scQC basic
+> testCounts <- matrix(rpois(500 * 100, lambda = 50), nrow = 100, ncol = 500)
+> rownames(testCounts) <- paste0("gene", 1:100)
+> colnames(testCounts) <- paste0("cell", 1:500)
+> rownames(testCounts)[1:5] <- paste0("MT-", LETTERS[1:5])
+> 
+> qc_result <- scQC(testCounts, mtThreshold = 0.2, minLSize = 100)
+> test("QC returns matrix", is.matrix(qc_result) || inherits(qc_result, "Matrix"))
+Testing: QC returns matrix ... PASSED
+> test("QC may reduce cells", ncol(qc_result) <= ncol(testCounts))
+Testing: QC may reduce cells ... PASSED
+> test("QC preserves all genes", nrow(qc_result) == nrow(testCounts))
+Testing: QC preserves all genes ... PASSED
+> 
+> # ============================================================
+> # 7. INPUT VALIDATION TESTS
+> # ============================================================
+> cat("\n=== 7. INPUT VALIDATION TESTS ===\n\n")
+
+=== 7. INPUT VALIDATION TESTS ===
+
+> 
+> cat("Test 7.1: pcNetFast validation\n")
+Test 7.1: pcNetFast validation
+> badX <- matrix(1:100, ncol = 10)
+> rownames(badX) <- paste0("gene", 1:10)
+> 
+> test("Error when nComp too large", 
++      tryCatch({ pcNetFast(badX, nComp = 15, verbose = FALSE); FALSE }, 
++               error = function(e) grepl("nComp", e$message)))
+Testing: Error when nComp too large ... PASSED
+> test("Error when nComp too small",
++      tryCatch({ pcNetFast(badX, nComp = 1, verbose = FALSE); FALSE }, 
++               error = function(e) grepl("nComp", e$message)))
+Testing: Error when nComp too small ... PASSED
+> 
+> # ============================================================
+> # 8. END-TO-END INTEGRATION TEST
+> # ============================================================
+> cat("\n=== 8. END-TO-END INTEGRATION TEST ===\n\n")
+
+=== 8. END-TO-END INTEGRATION TEST ===
+
+> 
+> cat("Test 8.1: Full scTenifoldKnk pipeline\n")
+Test 8.1: Full scTenifoldKnk pipeline
+> scRNAseq <- read.csv(system.file("single-cell/example.csv", 
++                                   package = "scTenifoldKnk"), row.names = 1)
+> scRNAseq <- as.matrix(scRNAseq)
+> 
+> full_result <- tryCatch({
++   scTenifoldKnk(
++     countMatrix = scRNAseq,
++     gKO = "G100",
++     qc_minLSize = 0,
++     nc_nNet = 3,
++     nc_nCells = min(100, ncol(scRNAseq)),
++     td_K = 3,
++     td_maxIter = 100,
++     verbose = FALSE
++   )
++ }, error = function(e) {
++   cat(sprintf("  Pipeline error: %s\n", e$message))
++   NULL
++ })
+> 
+> test("Full pipeline completes successfully", !is.null(full_result))
+Testing: Full pipeline completes successfully ... PASSED
+> 
+> if (!is.null(full_result)) {
++   test("Has WT network", !is.null(full_result$tensorNetworks$WT))
++   test("Has KO network", !is.null(full_result$tensorNetworks$KO))
++   test("Has manifold alignment", !is.null(full_result$manifoldAlignment))
++   test("Has differential regulation results", !is.null(full_result$diffRegulation))
++   
++   # KO gene should be most affected
++   top_gene <- full_result$diffRegulation$gene[1]
++   cat(sprintf("  Top affected gene: %s\n", top_gene))
++   test("KO gene (G100) is most affected", top_gene == "G100")
++   
++   # KO network should have G100 row zeroed
++   ko_net <- as.matrix(full_result$tensorNetworks$KO)
++   g100_idx <- which(rownames(ko_net) == "G100")
++   ko_row_sum <- sum(abs(ko_net[g100_idx, ]))
++   cat(sprintf("  G100 row sum in KO network: %.10f\n", ko_row_sum))
++   test("G100 outgoing edges zeroed in KO", ko_row_sum < 1e-10)
++   
++   # WT network should NOT have G100 row zeroed
++   wt_net <- as.matrix(full_result$tensorNetworks$WT)
++   wt_row_sum <- sum(abs(wt_net[g100_idx, ]))
++   cat(sprintf("  G100 row sum in WT network: %.10f\n", wt_row_sum))
++   test("WT network G100 row is NOT zero", wt_row_sum > 1e-10)
++ }
+Testing: Has WT network ... PASSED
+Testing: Has KO network ... PASSED
+Testing: Has manifold alignment ... PASSED
+Testing: Has differential regulation results ... PASSED
+  Top affected gene: G100
+Testing: KO gene (G100) is most affected ... PASSED
+  G100 row sum in KO network: 0.0000000000
+Testing: G100 outgoing edges zeroed in KO ... PASSED
+  G100 row sum in WT network: 7.7559726962
+Testing: WT network G100 row is NOT zero ... PASSED
+> 
+> # ============================================================
+> # SUMMARY
+> # ============================================================
+> cat("\n========================================\n")
+
+========================================
+> cat(sprintf("  RESULTS: %d PASSED, %d FAILED\n", passed, failed))
+  RESULTS: 41 PASSED, 0 FAILED
+> cat("========================================\n\n")
+========================================
+
+> 
+> if (failed > 0) {
++   cat("SOME TESTS FAILED! Please review.\n")
++   quit(status = 1)
++ } else {
++   cat("ALL TESTS PASSED! Package is scientifically accurate.\n")
++ }
+ALL TESTS PASSED! Package is scientifically accurate.
+> 
+> proc.time()
+   user  system elapsed 
+  0.751   0.049   0.815 

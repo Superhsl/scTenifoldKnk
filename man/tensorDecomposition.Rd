@@ -10,25 +10,34 @@ tensorDecomposition(
   nDecimal = 1,
   K = 5,
   maxError = 1e-05,
-  maxIter = 1000
+  maxIter = 1000,
+  useCpp = TRUE
 )
 }
 \arguments{
-\item{xList}{A list of gene regulatory networks}
+\item{xList}{A list of gene regulatory networks (sparse or dense matrices)}
 
-\item{yList}{Optional. A list of gene regulatory networks}
+\item{yList}{Optional. A second list of gene regulatory networks for comparison}
 
-\item{nDecimal}{An integer value indicating the number of decimal places to be used}
+\item{nDecimal}{An integer value for decimal places in output (default: 1)}
 
-\item{K}{The number of rank-one tensors used to approximate the data}
+\item{K}{The CP rank (number of components, default: 5)}
 
-\item{maxError}{A decimal value between 0 and 1. Defines the relative Frobenius norm error tolerance}
+\item{maxError}{Convergence threshold for relative Frobenius norm (default: 1e-5)}
 
-\item{maxIter}{An integer value. Defines the maximum number of iterations}
+\item{maxIter}{Maximum number of ALS iterations (default: 1000)}
+
+\item{useCpp}{Logical. If TRUE (default), use faster C++ implementation}
 }
 \value{
-A list of weight-averaged denoised gene regulatory networks
+A list containing denoised network(s): $X and optionally $Y
 }
 \description{
-Generate weight-averaged denoised gene regulatory networks using CANDECOMP/PARAFAC (CP) Tensor Decomposition
+Generate weight-averaged denoised gene regulatory networks using
+CANDECOMP/PARAFAC (CP) Tensor Decomposition with Alternating Least Squares.
+}
+\details{
+The function stacks input networks into a 3-way tensor and performs
+CP decomposition to extract the underlying low-rank structure. The reconstructed
+network is a weighted average that reduces noise.
 }

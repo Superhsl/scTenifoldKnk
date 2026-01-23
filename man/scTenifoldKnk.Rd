@@ -2,7 +2,7 @@
 % Please edit documentation in R/scTenifoldKnk.R
 \name{scTenifoldKnk}
 \alias{scTenifoldKnk}
-\title{Optimized Virtual Knockout Experiment}
+\title{Virtual Knockout Experiment}
 \usage{
 scTenifoldKnk(
   countMatrix,
@@ -66,7 +66,7 @@ scTenifoldKnk(
 A list containing tensor networks, manifold alignment, and differential regulation results
 }
 \description{
-Performs in-silico gene knockout experiments using optimized algorithms
+Performs in-silico gene knockout experiments on single-cell gene regulatory networks
 }
 \examples{
 # Loading single-cell data

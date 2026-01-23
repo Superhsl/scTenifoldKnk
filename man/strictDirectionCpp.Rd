@@ -2,7 +2,7 @@
 % Please edit documentation in R/RcppExports.R
 \name{strictDirectionCpp}
 \alias{strictDirectionCpp}
-\title{Enhance network directionality with C++ acceleration}
+\title{Apply directional penalty to network}
 \usage{
 strictDirectionCpp(XSEXP, lambda = 1)
 }
@@ -12,8 +12,12 @@ strictDirectionCpp(XSEXP, lambda = 1)
 \item{X}{Network adjacency matrix}
 }
 \value{
-Enhanced network matrix
+Directional network matrix
 }
 \description{
-Enhance network directionality with C++ acceleration
+Apply directional penalty to network
+}
+\details{
+For each pair (i,j), if |X[i,j]| < |X[j,i]|, then X[i,j] is set to 0.
+The final result is: (1-lambda)*X + lambda*S where S is the directional matrix.
 }

@@ -7,15 +7,25 @@
 scQC(X, mtThreshold = 0.1, minLSize = 1000)
 }
 \arguments{
-\item{X}{A count matrix or Seurat object}
+\item{X}{A count matrix (genes x cells) or Seurat object (v4 or v5 compatible)}
 
-\item{mtThreshold}{Maximum mitochondrial read ratio threshold}
+\item{mtThreshold}{Maximum mitochondrial read ratio threshold (0-1)}
 
-\item{minLSize}{Minimum library size threshold}
+\item{minLSize}{Minimum library size threshold (total UMI counts per cell)}
 }
 \value{
-Filtered count matrix
+Filtered count matrix or Seurat object (same type as input)
 }
 \description{
 Performs quality control filtering on single-cell RNA-seq data
+based on library size, gene count, and mitochondrial content.
+}
+\details{
+Cells are filtered based on:
+\enumerate{
+  \item Library size >= minLSize
+  \item Number of detected genes within expected range (linear model prediction)
+  \item Mitochondrial proportion <= mtThreshold (if MT genes present)
+  \item Library size < 2x mean (removes potential doublets)
+}
 }

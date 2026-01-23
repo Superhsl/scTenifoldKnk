@@ -2,7 +2,7 @@
 % Please edit documentation in R/pcNetFast.R
 \name{pcNetFast}
 \alias{pcNetFast}
-\title{Optimized gene regulatory network construction using principal component regression}
+\title{Gene regulatory network construction using principal component regression}
 \usage{
 pcNetFast(
   X,
@@ -37,22 +37,14 @@ the maximum absolute value is 1.}
 A gene regulatory network in dgCMatrix format.
 }
 \description{
-This is an optimized version of pcNet that maintains scientific accuracy while improving performance
-through efficient matrix operations, caching, and vectorization. Unlike naive batch approaches, this version
-uses smart caching of SVD results to avoid redundant computations while maintaining leave-one-out accuracy.
+Constructs a gene regulatory network using principal component regression.
+Uses efficient matrix operations and supports both accurate (leave-one-out) and 
+approximate (global PCA) methods.
 }
 \details{
-This optimized implementation uses several strategies:
-\enumerate{
-\item Pre-standardization of the data matrix
-\item Vectorized operations where possible
-\item Efficient sparse matrix operations
-\item Smart memory management
-}
-
-When use_approximate=TRUE, it uses a global PCA approach (30-50x faster but correlation ~0.76 with original).
-When use_approximate=FALSE (default), it maintains leave-one-out accuracy with modest speedup (5-10x) through
-efficient matrix operations.
+When use_approximate=FALSE (default), the function performs leave-one-out
+principal component regression for each gene, which provides accurate network inference.
+When use_approximate=TRUE, it uses a global PCA approach which is faster but less accurate.
 }
 \examples{
 library(scTenifoldKnk)

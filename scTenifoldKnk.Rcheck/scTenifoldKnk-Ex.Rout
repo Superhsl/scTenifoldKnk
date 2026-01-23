@@ -1,0 +1,127 @@
+
+R version 4.4.0 (2024-04-24) -- "Puppy Cup"
+Copyright (C) 2024 The R Foundation for Statistical Computing
+Platform: aarch64-apple-darwin20
+
+R is free software and comes with ABSOLUTELY NO WARRANTY.
+You are welcome to redistribute it under certain conditions.
+Type 'license()' or 'licence()' for distribution details.
+
+  Natural language support but running in an English locale
+
+R is a collaborative project with many contributors.
+Type 'contributors()' for more information and
+'citation()' on how to cite R or R packages in publications.
+
+Type 'demo()' for some demos, 'help()' for on-line help, or
+'help.start()' for an HTML browser interface to help.
+Type 'q()' to quit R.
+
+> pkgname <- "scTenifoldKnk"
+> source(file.path(R.home("share"), "R", "examples-header.R"))
+> options(warn = 1)
+> library('scTenifoldKnk')
+> 
+> base::assign(".oldSearch", base::search(), pos = 'CheckExEnv')
+> base::assign(".old_wd", base::getwd(), pos = 'CheckExEnv')
+> cleanEx()
+> nameEx("makeNetworksFast")
+> ### * makeNetworksFast
+> 
+> flush(stderr()); flush(stdout())
+> 
+> ### Name: makeNetworksFast
+> ### Title: Construction of multiple gene regulatory networks
+> ### Aliases: makeNetworksFast
+> 
+> ### ** Examples
+> 
+> library(scTenifoldKnk)
+> 
+> # Simulating dataset
+> nCells <- 2000
+> nGenes <- 100
+> set.seed(1)
+> X <- rnbinom(n = nGenes * nCells, size = 20, prob = 0.98)
+> X <- matrix(X, ncol = nCells)
+> rownames(X) <- paste0("gene", 1:nGenes)
+> 
+> # Quality control
+> X <- X[rowSums(X) > 0, ]
+> 
+> # Generate networks (sequential for small data)
+> networks <- makeNetworksFast(
++   X = X, nNet = 10, nCells = 500, nComp = 3,
++   scaleScores = TRUE, symmetric = FALSE, q = 0.95
++ )
+Using sequential processing (dataset size doesn't warrant parallel overhead)
+Generating 10 networks (100 genes, 500 cells/network, 3 PCs)...
+Building networks sequentially...
+  Network 1/10
+  Network 6/10
+Successfully generated 10 networks
+> 
+> 
+> 
+> cleanEx()
+> nameEx("scTenifoldKnk")
+> ### * scTenifoldKnk
+> 
+> flush(stderr()); flush(stdout())
+> 
+> ### Name: scTenifoldKnk
+> ### Title: Virtual Knockout Experiment
+> ### Aliases: scTenifoldKnk
+> 
+> ### ** Examples
+> 
+> # Loading single-cell data
+> scRNAseq <- system.file("single-cell/example.csv", package = "scTenifoldKnk")
+> scRNAseq <- read.csv(scRNAseq, row.names = 1)
+> 
+> # Running scTenifoldKnk
+> result <- scTenifoldKnk(countMatrix = scRNAseq, gKO = "G100", qc_minLSize = 0)
+=== scTenifoldKnk: Virtual Knockout Analysis ===
+
+Step 1/6: Quality control...
+  Retained 100 genes and 2837 cells after QC
+
+Step 2/6: Constructing gene regulatory networks...
+Using sequential processing (dataset size doesn't warrant parallel overhead)
+Generating 10 networks (100 genes, 500 cells/network, 3 PCs)...
+Building networks sequentially...
+  Network 1/10
+  Network 6/10
+Successfully generated 10 networks
+
+Step 3/6: Tensor decomposition...
+  Tensor decomposition complete
+
+Step 4/6: Performing virtual knockout...
+  Gene 'G100' knocked out
+
+Step 5/6: Manifold alignment...
+  Manifold alignment complete
+
+Step 6/6: Differential regulation analysis...
+  Found 1 significantly affected genes (FDR < 0.05)
+
+=== Analysis complete ===
+> 
+> 
+> 
+> ### * <FOOTER>
+> ###
+> cleanEx()
+> options(digits = 7L)
+> base::cat("Time elapsed: ", proc.time() - base::get("ptime", pos = 'CheckExEnv'),"\n")
+Time elapsed:  7.303 0.102 7.428 0.004 0.003 
+> grDevices::dev.off()
+null device 
+          1 
+> ###
+> ### Local variables: ***
+> ### mode: outline-minor ***
+> ### outline-regexp: "\\(> \\)?### [*]+" ***
+> ### End: ***
+> quit('no')
