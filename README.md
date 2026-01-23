@@ -1,48 +1,67 @@
 # scTenifoldKnk
 
-A workflow for in-silico gene knockout experiments using single-cell RNA-seq data.
+<!-- badges: start -->
+[![R-Universe](https://zaoqu-liu.r-universe.dev/badges/scTenifoldKnk)](https://zaoqu-liu.r-universe.dev/scTenifoldKnk)
+[![R-CMD-check](https://github.com/Zaoqu-Liu/scTenifoldKnk/workflows/R-CMD-check/badge.svg)](https://github.com/Zaoqu-Liu/scTenifoldKnk/actions)
+[![License: GPL v2](https://img.shields.io/badge/License-GPL%20v2-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html)
+<!-- badges: end -->
 
-## Version 2.0.0
+## Overview
 
-**Maintainer**: Zaoqu Liu (liuzaoqu@163.com)  
-**Repository**: https://github.com/Zaoqu-Liu/scTenifoldKnk
+**scTenifoldKnk** is a computational framework for performing *in-silico* gene knockout experiments using single-cell RNA sequencing (scRNA-seq) data. By leveraging gene regulatory network (GRN) perturbation analysis, scTenifoldKnk enables researchers to predict the transcriptional consequences of gene knockouts without conducting wet-lab experiments.
 
-### Updates in This Version
+The method integrates several advanced computational techniques:
 
-This version includes performance optimizations while maintaining compatibility with the original implementation.
+- **Principal Component Regression (PCR)** for robust GRN inference
+- **CP Tensor Decomposition** for network denoising and averaging
+- **Non-linear Manifold Alignment (NLMA)** for network comparison
+- **Chi-square Statistics** for identifying differentially regulated genes
 
-- **Performance improvements** for medium to large datasets:
-  - 500 genes: ~4x faster (benchmarked: 133s → 34s)
-  - 1000 genes: ~3.5x faster (benchmarked: 517s → 150s)
-  - Note: Small datasets (<200 genes) show minimal speedup due to parallelization overhead
-  
-- **Result consistency**: High correlation (>0.999) with original version on test datasets
+## Methodology
 
-- **Adaptive parallelization**: Automatically selects sequential or parallel mode based on data size
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         scTenifoldKnk Workflow                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐              │
+│  │ scRNA-seq│───▶│ Quality  │───▶│ Network  │───▶│  Tensor  │              │
+│  │   Data   │    │ Control  │    │  Build   │    │ Decomp.  │              │
+│  └──────────┘    └──────────┘    └──────────┘    └──────────┘              │
+│                                                        │                    │
+│                                                        ▼                    │
+│  ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐              │
+│  │   Diff   │◀───│ Manifold │◀───│    KO    │◀───│    WT    │              │
+│  │Regulation│    │Alignment │    │ Network  │    │ Network  │              │
+│  └──────────┘    └──────────┘    └──────────┘    └──────────┘              │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
-- **Implementation changes**:
-  - Optimized matrix operations
-  - Vectorized computations where possible
-  - Multi-core processing for network construction
+The scTenifoldKnk workflow consists of six sequential steps:
 
-### Benchmark Results
-
-Results from tests on Apple Silicon (M-series, 10 cores) using synthetic data:
-
-| Data Size | v1.0.1 | v2.0.0 | Speedup | Correlation |
-|-----------|--------|--------|---------|-------------|
-| 100 genes × 3000 cells | 4.4s | 2.9s | 1.5x | 0.9999 |
-| 500 genes × 2000 cells | 133s | 34s | 4.0x | 1.0000 |
-| 1000 genes × 2500 cells | 517s | 150s | 3.5x | 1.0000 |
-
-*Note: Performance may vary depending on hardware, data characteristics, and system load.*
+1. **Quality Control**: Filter low-quality cells based on library size, gene detection rate, and mitochondrial content
+2. **Network Construction**: Build multiple GRNs from random cell subsamples using principal component regression
+3. **Tensor Decomposition**: Apply CANDECOMP/PARAFAC (CP) decomposition to denoise and average networks
+4. **Virtual Knockout**: Simulate gene knockout by setting target gene's outgoing regulatory edges to zero
+5. **Manifold Alignment**: Embed wild-type and knockout networks into a shared low-dimensional space
+6. **Differential Regulation**: Identify genes significantly affected by the virtual knockout using chi-square statistics
 
 ## Installation
 
+### From R-Universe (Recommended)
+
 ```r
-# Install from GitHub
-library(remotes)
-install_github('Zaoqu-Liu/scTenifoldKnk')
+install.packages("scTenifoldKnk", 
+                 repos = c("https://zaoqu-liu.r-universe.dev", 
+                          "https://cloud.r-project.org"))
+```
+
+### From GitHub
+
+```r
+# install.packages("devtools")
+devtools::install_github("Zaoqu-Liu/scTenifoldKnk")
 ```
 
 ## Quick Start
@@ -50,132 +69,75 @@ install_github('Zaoqu-Liu/scTenifoldKnk')
 ```r
 library(scTenifoldKnk)
 
-# Load example data
-scRNAseq <- system.file("single-cell/example.csv", package="scTenifoldKnk")
-scRNAseq <- read.csv(scRNAseq, row.names = 1)
+# Load example dataset
+data_path <- system.file("single-cell/example.csv", package = "scTenifoldKnk")
+countMatrix <- as.matrix(read.csv(data_path, row.names = 1))
 
-# Run analysis
+# Perform virtual knockout analysis
 result <- scTenifoldKnk(
-  countMatrix = scRNAseq, 
-  gKO = 'G100',
-  qc_minLSize = 0
+  countMatrix = countMatrix,
+  gKO = "TargetGene",
+  qc_minLSize = 1000,
+  nc_nNet = 10,
+  nc_nCells = 500,
+  td_K = 3
 )
 
-# View results
+# Examine differentially regulated genes
 head(result$diffRegulation)
 ```
 
-## Usage
+## Output Structure
 
-### Basic Analysis
+The `scTenifoldKnk()` function returns a list containing:
 
-```r
-result <- scTenifoldKnk(
-  countMatrix = your_data,  # Gene x Cell matrix (raw counts)
-  gKO = 'GENE_NAME',        # Gene to knockout
-  qc_minLSize = 1000        # Minimum library size
-)
-```
+| Component | Description |
+|-----------|-------------|
+| `tensorNetworks$WT` | Denoised wild-type gene regulatory network |
+| `tensorNetworks$KO` | Perturbed knockout gene regulatory network |
+| `manifoldAlignment` | Joint embedding matrix from NLMA |
+| `diffRegulation` | Data frame of differential regulation statistics |
 
-### Adjust Parameters
+### Differential Regulation Table
 
-```r
-# Fast mode (for exploration)
-result <- scTenifoldKnk(
-  countMatrix = data,
-  gKO = 'GENE',
-  nc_nNet = 5,              # Fewer networks
-  nc_nCells = 300           # Fewer cells per network
-)
+| Column | Description |
+|--------|-------------|
+| `gene` | Gene identifier |
+| `distance` | Euclidean distance between WT and KO embeddings |
+| `Z` | Z-score (standardized distance) |
+| `FC` | Fold change relative to background |
+| `p.value` | Chi-square test p-value |
+| `p.adj` | Benjamini-Hochberg adjusted p-value |
 
-# Standard mode (default, balanced)
-result <- scTenifoldKnk(
-  countMatrix = data,
-  gKO = 'GENE'
-)
+## Documentation
 
-# Robust mode (more accurate, slower)
-result <- scTenifoldKnk(
-  countMatrix = data,
-  gKO = 'GENE',
-  nc_nNet = 20,             # More networks
-  nc_nCells = 700           # More cells per network
-)
-```
+Comprehensive tutorials are available at the [package website](https://zaoqu-liu.github.io/scTenifoldKnk/):
 
-### Control Parallelization
-
-```r
-# Auto-detect cores (default)
-result <- scTenifoldKnk(data, gKO = 'GENE')
-
-# Specify cores
-result <- scTenifoldKnk(data, gKO = 'GENE', nCores = 4)
-
-# Sequential processing
-result <- scTenifoldKnk(data, gKO = 'GENE', nCores = 1)
-```
-
-## Output
-
-Returns a list with three components:
-
-1. **tensorNetworks**: Wild-type (WT) and knockout (KO) network matrices
-2. **manifoldAlignment**: Low-dimensional gene embeddings
-3. **diffRegulation**: Differential regulation statistics
-   - `gene`: Gene names
-   - `distance`: Euclidean distance between WT and KO
-   - `Z`: Z-score
-   - `FC`: Fold change
-   - `p.value`: P-value
-   - `p.adj`: FDR-adjusted p-value
-
-## Key Parameters
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `gKO` | - | Gene to knockout (required) |
-| `qc_mtThreshold` | 0.1 | Max mitochondrial read ratio |
-| `qc_minLSize` | 1000 | Min library size |
-| `nc_nNet` | 10 | Number of networks |
-| `nc_nCells` | 500 | Cells per network |
-| `nc_nComp` | 3 | Number of PCA components |
-| `nc_q` | 0.9 | Edge filtering quantile |
-| `nCores` | NULL | CPU cores (NULL = auto-detect) |
-
-## Requirements
-
-- R ≥ 3.6
-- Dependencies: Matrix, RSpectra, MASS, parallel, Rcpp, RcppEigen
-- C++ compiler for building from source
-
-## Limitations
-
-- Performance improvements are most noticeable for datasets with >500 genes
-- Very small datasets may not benefit from parallelization
-- Results may differ slightly from v1.0.1 due to different random subsampling (use same seed for reproducibility)
+| Vignette | Description |
+|----------|-------------|
+| [Quick Start](https://zaoqu-liu.github.io/scTenifoldKnk/articles/quick-start.html) | Basic usage and example workflow |
+| [Algorithm Theory](https://zaoqu-liu.github.io/scTenifoldKnk/articles/algorithm-theory.html) | Mathematical foundations and methodology |
+| [Visualization](https://zaoqu-liu.github.io/scTenifoldKnk/articles/visualization.html) | Result visualization techniques |
+| [Advanced Usage](https://zaoqu-liu.github.io/scTenifoldKnk/articles/advanced-usage.html) | Parameter optimization and customization |
+| [Result Interpretation](https://zaoqu-liu.github.io/scTenifoldKnk/articles/interpretation.html) | Biological interpretation guidelines |
 
 ## Citation
 
-**Original Method**:  
-Osorio D, et al. scTenifoldKnk: An Efficient Virtual Knockout Tool for Gene Function Prediction via Single-Cell Gene Regulatory Network Perturbation. Patterns. 2020.
+If you use scTenifoldKnk in your research, please cite:
 
-**This Version**:  
-If you use this optimized version, please also cite:  
-Liu Z. scTenifoldKnk v2.0.0 with performance improvements. GitHub: https://github.com/Zaoqu-Liu/scTenifoldKnk, 2024.
+> Osorio D, Zhong Y, Li G, Xu Q, Yang Y, Hillhouse A, Chen J, Davidson L, Tian Y, Chapkin R, Huang J, Cai JJ. **scTenifoldKnk: An efficient virtual knockout tool for gene function predictions via single-cell gene regulatory network perturbation.** *Patterns*. 2022;3(3):100434. doi: [10.1016/j.patter.2022.100434](https://doi.org/10.1016/j.patter.2022.100434)
+
+## Authors
+
+- **Zaoqu Liu** - Maintainer (<liuzaoqu@163.com>)
+- **Daniel Osorio** - Original Author
+- **James J. Cai** - Principal Investigator
 
 ## License
 
-GPL (≥ 2)
+This package is licensed under GPL (>= 2).
 
-## Credits
+## Related Resources
 
-**Original Authors**: Daniel Osorio, James Cai, and contributors from Texas A&M University
-
-**Performance improvements**: Zaoqu Liu (ORCID: 0000-0002-0452-742X)
-
-## Links
-
-- Original Repository: https://github.com/cailab-tamu/scTenifoldKnk
-- Optimized Repository: https://github.com/Zaoqu-Liu/scTenifoldKnk
-- Issues: https://github.com/Zaoqu-Liu/scTenifoldKnk/issues
+- [scTenifoldNet](https://github.com/cailab-tamu/scTenifoldNet) - Comparative single-cell GRN analysis
+- [Seurat](https://satijalab.org/seurat/) - Comprehensive scRNA-seq analysis toolkit

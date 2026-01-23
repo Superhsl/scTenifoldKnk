@@ -5,17 +5,15 @@
 #include <cmath>
 #include <numeric>
 
-#ifdef _OPENMP
-#include <omp.h>
-#endif
-
 // [[Rcpp::depends(RcppEigen)]]
 
 using namespace Rcpp;
 using Eigen::MatrixXd;
 using Eigen::VectorXd;
 
-// Box-Cox transformation with input validation
+// Box-Cox transformation with COMPLETE profile log-likelihood
+// Reference: Box, G. E., & Cox, D. R. (1964). An analysis of transformations.
+// Full log-likelihood: LL(λ) = -n/2 * log(σ²) + (λ-1) * Σlog(y_i)
 VectorXd boxCoxTransform(const VectorXd& x) {
     int n = static_cast<int>(x.size());
     
@@ -27,43 +25,45 @@ VectorXd boxCoxTransform(const VectorXd& x) {
         // Add offset to make all values positive
         double offset = std::abs(minVal) + 1e-6;
         xPositive = x.array() + offset;
-        Rcout << "  Note: Applied offset " << offset << " to ensure positive values for Box-Cox" << std::endl;
     }
     
     // Additional check: ensure no values are too close to zero
-    if (xPositive.minCoeff() < 1e-10) {
-        xPositive = xPositive.array().max(1e-10);
-    }
+    xPositive = xPositive.array().max(1e-10);
     
-    // Find optimal lambda using profile likelihood
-    // Search range: -2 to 2
+    // Precompute sum of log(y) for Jacobian term (constant across lambda)
+    double sumLogY = xPositive.array().log().sum();
+    
+    // Find optimal lambda using COMPLETE profile log-likelihood
+    // Search range: -2 to 2, excluding values near 0
     const int nLambda = 1000;
     VectorXd lambdaValues = VectorXd::LinSpaced(nLambda, -2.0, 2.0);
     VectorXd logLikelihood(nLambda);
     
-    // Parallel search for optimal lambda
-    #ifdef _OPENMP
-    #pragma omp parallel for
-    #endif
     for (int i = 0; i < nLambda; ++i) {
         double lambda = lambdaValues(i);
         
-        if (std::abs(lambda) < 1e-6) {
-            lambda = 1e-6;  // Avoid division by zero
-        }
-        
         VectorXd transformed(n);
-        if (lambda < 0) {
-            transformed = 1.0 / (xPositive.array().pow(lambda));
+        
+        if (std::abs(lambda) < 1e-6) {
+            // Log transformation when lambda ≈ 0
+            // Box-Cox: y^(λ) = (y^λ - 1)/λ → log(y) as λ → 0
+            transformed = xPositive.array().log();
         } else {
+            // Standard Box-Cox transformation: (y^λ - 1)/λ
+            // For likelihood, we use y^λ (equivalent up to linear transformation)
             transformed = xPositive.array().pow(lambda);
         }
         
+        // Compute variance of transformed data
         double mean = transformed.mean();
-        double variance = (transformed.array() - mean).square().mean();
+        double variance = (transformed.array() - mean).square().sum() / (n - 1);
         
-        // Log-likelihood (simplified)
-        double ll = -0.5 * n * std::log(variance);
+        // Protect against zero variance
+        if (variance < 1e-20) variance = 1e-20;
+        
+        // COMPLETE log-likelihood with Jacobian term
+        // LL(λ) = -n/2 * log(σ²) + (λ-1) * Σlog(y_i)
+        double ll = -0.5 * n * std::log(variance) + (lambda - 1.0) * sumLogY;
         logLikelihood(i) = ll;
     }
     
@@ -74,18 +74,25 @@ VectorXd boxCoxTransform(const VectorXd& x) {
     
     // Apply optimal transformation
     VectorXd transformed(n);
-    if (optimalLambda < 0) {
-        transformed = 1.0 / (xPositive.array().pow(optimalLambda));
+    if (std::abs(optimalLambda) < 1e-6) {
+        // Log transformation
+        transformed = xPositive.array().log();
     } else {
         transformed = xPositive.array().pow(optimalLambda);
     }
     
     // Validate output: check for NaN or Inf
+    bool hasInvalid = false;
     for (int i = 0; i < n; ++i) {
         if (std::isnan(transformed(i)) || std::isinf(transformed(i))) {
-            Rcout << "Warning: Box-Cox produced invalid values, using log transformation" << std::endl;
-            return xPositive.array().log();
+            hasInvalid = true;
+            break;
         }
+    }
+    
+    if (hasInvalid) {
+        // Fallback to log transformation
+        return xPositive.array().log();
     }
     
     return transformed;
@@ -96,13 +103,10 @@ VectorXd chiSquarePvalues(const VectorXd& chiSquareStats, int df = 1) {
     int n = static_cast<int>(chiSquareStats.size());
     VectorXd pvalues(n);
     
-    #ifdef _OPENMP
-    #pragma omp parallel for
-    #endif
     for (int i = 0; i < n; ++i) {
         // P[X > x] for chi-square distribution
-        // Using R's pchisq via Rcpp
-        pvalues(i) = R::pchisq(chiSquareStats(i), df, 0, 0);  // lower.tail = FALSE
+        // Using R's pchisq via Rcpp (lower.tail = FALSE, log.p = FALSE)
+        pvalues(i) = R::pchisq(chiSquareStats(i), static_cast<double>(df), 0, 0);
     }
     
     return pvalues;
@@ -158,94 +162,80 @@ DataFrame dRegulationCpp(
         stop("manifoldOutput should have 2*nGenes rows");
     }
     
-    Rcout << "Computing distances for " << nGenes << " genes..." << std::endl;
-    
     // Compute Euclidean distances between WT and KO embeddings
-    // This is VECTORIZED - huge speedup over R's sapply!
-    VectorXd distances(nGenes);
+    // WT embeddings: rows 0 to nGenes-1
+    // KO embeddings: rows nGenes to 2*nGenes-1
+    MatrixXd wtEmbeddings = manifoldOutput.topRows(nGenes);
+    MatrixXd koEmbeddings = manifoldOutput.bottomRows(nGenes);
     
-    #ifdef _OPENMP
-    #pragma omp parallel for
-    #endif
-    for (int i = 0; i < nGenes; ++i) {
-        // WT embedding (first nGenes rows)
-        VectorXd x = manifoldOutput.row(i);
-        
-        // KO embedding (last nGenes rows)
-        VectorXd y = manifoldOutput.row(i + nGenes);
-        
-        // Euclidean distance
-        distances(i) = (x - y).norm();
-    }
+    // Distance: ||WT_i - KO_i||_2 for each gene
+    VectorXd distances = (wtEmbeddings - koEmbeddings).rowwise().norm();
     
-    Rcout << "Applying Box-Cox transformation..." << std::endl;
-    
-    // Box-Cox transformation
+    // Box-Cox transformation for normality
     VectorXd transformed = boxCoxTransform(distances);
     
     // Z-score normalization
     double mean = transformed.mean();
-    double stdDev = std::sqrt((transformed.array() - mean).square().mean());
+    double variance = (transformed.array() - mean).square().sum() / (nGenes - 1);
+    double stdDev = std::sqrt(variance);
     
     // Prevent division by zero
-    if (stdDev < 1e-10) {
+    if (stdDev < std::numeric_limits<double>::epsilon()) {
         stdDev = 1.0;
-        Rcout << "  Warning: Near-zero standard deviation, using stdDev=1" << std::endl;
     }
     
     VectorXd Z = (transformed.array() - mean) / stdDev;
     
-    Rcout << "Computing fold changes and p-values..." << std::endl;
-    
-    // Sort genes by distance (descending)
+    // Sort genes by distance (descending) - most affected genes first
     std::vector<int> sortedIdx(nGenes);
     std::iota(sortedIdx.begin(), sortedIdx.end(), 0);
     std::sort(sortedIdx.begin(), sortedIdx.end(), [&](int a, int b) {
         return distances(a) > distances(b);
     });
     
-    // Find knockout gene index
-    int koIdx = -1;
+    // Find ALL knockout gene indices (support multiple KO genes)
+    std::vector<int> koIndices;
     for (int i = 0; i < nGenes; ++i) {
         if (geneNames[i] == gKO) {
-            koIdx = i;
-            break;
+            koIndices.push_back(i);
         }
     }
     
-    // Compute FC: distance^2 / mean(other distances^2)
+    // Compute FC: distance^2 / mean(reference distances^2)
+    // Reference = all genes EXCEPT the knockout gene(s)
     VectorXd distSquared = distances.array().square();
     
-    // Compute mean excluding KO gene
+    // Compute mean squared distance excluding KO gene(s)
     double sumSquared = distSquared.sum();
-    int denominator = nGenes - 1;
+    int referenceCount = nGenes;
     
-    if (koIdx >= 0) {
-        sumSquared -= distSquared(koIdx);
-        denominator = nGenes - 1;
-    } else {
-        denominator = nGenes;
+    for (int idx : koIndices) {
+        sumSquared -= distSquared(idx);
+        referenceCount--;
     }
     
-    double meanSquared = sumSquared / denominator;
+    // Handle edge case: all genes are KO genes
+    if (referenceCount <= 0) {
+        referenceCount = nGenes;
+        sumSquared = distSquared.sum();
+    }
+    
+    double meanSquared = sumSquared / referenceCount;
     
     // Protect against division by zero
-    if (meanSquared < 1e-10) {
-        Rcout << "  Warning: All genes have near-zero distances, setting meanSquared=1" << std::endl;
+    if (meanSquared < std::numeric_limits<double>::epsilon()) {
         meanSquared = 1.0;
     }
     
     VectorXd FC = distSquared / meanSquared;
     
-    // P-values using chi-square distribution
+    // P-values using chi-square distribution (df=1)
     VectorXd pvalues = chiSquarePvalues(FC, 1);
     
-    // FDR correction
+    // FDR correction using Benjamini-Hochberg
     VectorXd padj = fdrCorrection(pvalues);
     
-    Rcout << "Creating output DataFrame..." << std::endl;
-    
-    // Create output DataFrame (sorted by distance)
+    // Create output DataFrame (sorted by distance, descending)
     std::vector<std::string> sortedGenes(nGenes);
     VectorXd sortedDist(nGenes);
     VectorXd sortedZ(nGenes);
@@ -271,8 +261,6 @@ DataFrame dRegulationCpp(
         Named("p.value") = sortedPval,
         Named("p.adj") = sortedPadj
     );
-    
-    Rcout << "Differential regulation analysis completed!" << std::endl;
     
     return result;
 }

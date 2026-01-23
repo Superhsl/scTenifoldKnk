@@ -1,21 +1,19 @@
 #include <RcppEigen.h>
 #include "utils/matrix_ops.h"
 
-#ifdef _OPENMP
-#include <omp.h>
-#endif
-
 // [[Rcpp::depends(RcppEigen)]]
 
 using namespace Rcpp;
 using Eigen::MatrixXd;
 using Eigen::SparseMatrix;
 
-//' Enhance network directionality with C++ acceleration
+//' Apply directional penalty to network
 //' 
 //' @param X Network adjacency matrix
 //' @param lambda Directionality parameter (0 to 1)
-//' @return Enhanced network matrix
+//' @return Directional network matrix
+//' @details For each pair (i,j), if |X[i,j]| < |X[j,i]|, then X[i,j] is set to 0.
+//' The final result is: (1-lambda)*X + lambda*S where S is the directional matrix.
 //' @export
 // [[Rcpp::export]]
 Eigen::SparseMatrix<double> strictDirectionCpp(
@@ -26,83 +24,49 @@ Eigen::SparseMatrix<double> strictDirectionCpp(
     MatrixXd X = as<MatrixXd>(XSEXP);
     
     if (lambda == 0.0) {
-        // Fast path: no directionality enhancement, just convert to sparse
-        return matrix_ops::denseToSparseOptimized(X, 1e-10);
+        // Fast path: no directionality penalty, just convert to sparse
+        return matrix_ops::denseToSparse(X, 1e-10);
     }
     
+    // Step 1: Compute absolute values
+    MatrixXd absX = X.cwiseAbs();
+    MatrixXd absX_t = absX.transpose();
+    
+    // Step 2: Create directional mask
+    // Keep X[i,j] if |X[i,j]| > |X[j,i]| (strictly greater)
+    // For ties (|X[i,j]| == |X[j,i]|), keep upper triangle (i < j)
+    // This matches the R implementation behavior
     int n = static_cast<int>(X.rows());
+    MatrixXd mask = (absX.array() > absX_t.array()).cast<double>();
     
-    // Optimized: Combine all operations in single pass to avoid multiple matrix traversals
-    // This reduces 3 loops to 1 loop
-    std::vector<Eigen::Triplet<double>> triplets;
-    triplets.reserve(n * n / 4);  // Estimate: ~25% non-zero after processing
-    
-    #ifdef _OPENMP
-    #pragma omp parallel
-    {
-        // Thread-local storage for triplets
-        std::vector<Eigen::Triplet<double>> localTriplets;
-        int nThreads = omp_get_num_threads();
-        localTriplets.reserve(n * n / (4 * nThreads));
-        
-        #pragma omp for collapse(2)
-        for (int i = 0; i < n; ++i) {
-            for (int j = 0; j < n; ++j) {
-                double xij = X(i, j);
-                double xji = X(j, i);
-                
-                // Apply directionality: keep stronger edge, zero weaker edge
-                double sij = (std::abs(xij) < std::abs(xji)) ? 0.0 : xij;
-                
-                // Combine: (1-lambda)*X + lambda*S
-                double result = (1.0 - lambda) * xij + lambda * sij;
-                
-                // Only store if non-zero
-                if (std::abs(result) > 1e-10) {
-                    localTriplets.emplace_back(i, j, result);
-                }
-            }
-        }
-        
-        // Merge local triplets into global list
-        #pragma omp critical
-        {
-            triplets.insert(triplets.end(), localTriplets.begin(), localTriplets.end());
-        }
-    }
-    #else
-    // Sequential fallback when OpenMP not available
-    for (int i = 0; i < n; ++i) {
-        for (int j = 0; j < n; ++j) {
-            double xij = X(i, j);
-            double xji = X(j, i);
-            
-            // Apply directionality: keep stronger edge, zero weaker edge
-            double sij = (std::abs(xij) < std::abs(xji)) ? 0.0 : xij;
-            
-            // Combine: (1-lambda)*X + lambda*S
-            double result = (1.0 - lambda) * xij + lambda * sij;
-            
-            // Only store if non-zero
-            if (std::abs(result) > 1e-10) {
-                triplets.emplace_back(i, j, result);
+    // Handle ties: keep upper triangle (i < j means row index < col index)
+    for (int j = 0; j < n; ++j) {
+        for (int i = 0; i < j; ++i) {  // Upper triangle only
+            if (std::abs(absX(i, j) - absX(j, i)) < 1e-10) {
+                // Tie: keep upper triangle entry
+                mask(i, j) = 1.0;
+                mask(j, i) = 0.0;
             }
         }
     }
-    #endif
     
-    Eigen::SparseMatrix<double> sparse(n, n);
-    sparse.setFromTriplets(triplets.begin(), triplets.end());
-    sparse.makeCompressed();
+    // Apply mask to get directional matrix
+    MatrixXd S = X.cwiseProduct(mask);
     
-    return sparse;
+    // Step 3: Combine with lambda weighting
+    MatrixXd result = (1.0 - lambda) * X + lambda * S;
+    
+    // Step 4: Convert to sparse matrix, filtering near-zero values
+    return matrix_ops::denseToSparse(result, 1e-10);
 }
 
 //' Perform virtual knockout on network
 //' 
 //' @param network Gene regulatory network matrix
-//' @param geneIdx Index of gene to knockout (0-based)
-//' @return Network with gene knocked out
+//' @param geneIdx Index of gene to knockout (0-based in C++, but R passes 1-based)
+//' @return Network with gene knocked out (outgoing edges set to zero)
+//' @details Sets all outgoing edges from the knocked out gene to zero,
+//' meaning this gene can no longer regulate other genes.
 //' @export
 // [[Rcpp::export]]
 Eigen::SparseMatrix<double> knockoutGeneCpp(
@@ -113,17 +77,17 @@ Eigen::SparseMatrix<double> knockoutGeneCpp(
     MatrixXd network = as<MatrixXd>(networkSEXP);
     int n = static_cast<int>(network.rows());
     
+    // Note: R uses 1-based indexing, C++ uses 0-based
+    // The caller should handle this conversion
     if (geneIdx < 0 || geneIdx >= n) {
-        stop("Invalid gene index");
+        stop("Invalid gene index: %d (valid range: 0 to %d)", geneIdx, n - 1);
     }
     
-    MatrixXd ko = network;
-    
     // Set outgoing edges to zero (this gene cannot regulate others)
-    ko.row(geneIdx).setZero();
+    network.row(geneIdx).setZero();
     
-    // Convert to sparse using optimized utility function
-    return matrix_ops::denseToSparseOptimized(ko, 1e-10);
+    // Convert to sparse
+    return matrix_ops::denseToSparse(network, 1e-10);
 }
 
 //' Convert sparse matrix to dense and transpose

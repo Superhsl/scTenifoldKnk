@@ -1,4 +1,4 @@
 library(testthat)
-library(scTenifoldKnk2)
+library(scTenifoldKnk)
 
-test_check("scTenifoldKnk2")
+test_check("scTenifoldKnk")

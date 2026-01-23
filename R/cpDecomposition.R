@@ -1,14 +1,23 @@
 #' @title Canonical Polyadic Decomposition
-#' @description CP decomposition of a tensor using Alternating Least Squares
+#' @description CP decomposition of a tensor using Alternating Least Squares (ALS).
+#' This is the pure R implementation used as fallback when C++ version is unavailable.
 #' @importFrom methods is
 #' @importFrom stats rnorm
 #' @importFrom utils setTxtProgressBar tail txtProgressBar
-#' @param tnsr Tensor with K modes
-#' @param num_components the number of rank-1 K-Tensors to use in approximation
-#' @param max_iter maximum number of iterations if error stays above tol
-#' @param tol relative Frobenius norm error tolerance
-#' @return a list containing decomposition results
-cpDecomposition <- function(tnsr, num_components = NULL, max_iter = 25, tol = 1e-5) {
+#' @param tnsr Tensor object with K modes (created by as.tensor)
+#' @param num_components The number of rank-1 tensors (CP rank)
+#' @param max_iter Maximum number of ALS iterations (default: 25)
+#' @param tol Relative Frobenius norm error tolerance (default: 1e-5)
+#' @param verbose Logical. If TRUE, show progress bar (default: FALSE)
+#' @return A list containing:
+#'   \item{lambdas}{Component weights}
+#'   \item{U}{List of factor matrices}
+#'   \item{conv}{Logical, whether algorithm converged}
+#'   \item{est}{Reconstructed tensor}
+#'   \item{norm_percent}{Percentage of norm captured}
+#'   \item{fnorm_resid}{Final residual norm}
+#' @keywords internal
+cpDecomposition <- function(tnsr, num_components = NULL, max_iter = 25, tol = 1e-5, verbose = FALSE) {
   # Helper functions
   kronecker_list <- function(L) {
     retmat <- L[[1]]
@@ -152,7 +161,11 @@ cpDecomposition <- function(tnsr, num_components = NULL, max_iter = 25, tol = 1e
     return(FALSE)
   }
 
-  pb <- txtProgressBar(min = 0, max = max_iter, style = 3)
+  # Progress bar (only if verbose and interactive)
+  show_progress <- verbose && interactive()
+  if (show_progress) {
+    pb <- txtProgressBar(min = 0, max = max_iter, style = 3)
+  }
 
   norm_vec <- function(vec) {
     sqrt(sum(vec^2))
@@ -160,14 +173,25 @@ cpDecomposition <- function(tnsr, num_components = NULL, max_iter = 25, tol = 1e
 
   # ALS iterations
   while ((curr_iter < max_iter) && (!converged)) {
-    setTxtProgressBar(pb, curr_iter)
+    if (show_progress) {
+      setTxtProgressBar(pb, curr_iter)
+    }
+
     for (m in 1:num_modes) {
       V <- hadamard_list(lapply(U_list[-m], function(x) {
         t(x) %*% x
       }))
-      V_inv <- solve(V)
+
+      # Add regularization for numerical stability
+      V <- V + diag(1e-10, nrow(V))
+      V_inv <- tryCatch(
+        solve(V),
+        error = function(e) MASS::ginv(V)  # Fallback to pseudo-inverse
+      )
+
       tmp <- unfolded_mat[[m]] %*% khatri_rao_list(U_list[-m], reverse = TRUE) %*% V_inv
       lambdas <- apply(tmp, 2, norm_vec)
+      lambdas[lambdas < 1e-10] <- 1e-10  # Prevent division by zero
       U_list[[m]] <- sweep(tmp, 2, lambdas, "/")
       Z <- superdiagonal_tensor(num_modes = num_modes, len = num_components, elements = lambdas)
       est <- ttl(Z, U_list, ms = 1:num_modes)
@@ -175,16 +199,20 @@ cpDecomposition <- function(tnsr, num_components = NULL, max_iter = 25, tol = 1e
 
     if (CHECK_CONV(est)) {
       converged <- TRUE
-      setTxtProgressBar(pb, max_iter)
+      if (show_progress) {
+        setTxtProgressBar(pb, max_iter)
+      }
     } else {
       curr_iter <- curr_iter + 1
     }
   }
 
-  if (!converged) {
-    setTxtProgressBar(pb, max_iter)
+  if (show_progress) {
+    if (!converged) {
+      setTxtProgressBar(pb, max_iter)
+    }
+    close(pb)
   }
-  close(pb)
 
   fnorm_resid <- fnorm_resid[fnorm_resid != 0]
   norm_percent <- (1 - (tail(fnorm_resid, 1) / tnsr_norm)) * 100

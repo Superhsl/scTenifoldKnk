@@ -10,7 +10,7 @@ test_that("pcNetFast produces valid network", {
   X <- X[rowSums(X) > 0, ]
 
   # Test network construction
-  network <- pcNetFast(X,
+  network <- scTenifoldKnk::pcNetFast(X,
     nComp = 3, scaleScores = TRUE,
     symmetric = FALSE, q = 0.9, verbose = FALSE
   )
@@ -22,8 +22,8 @@ test_that("pcNetFast produces valid network", {
   # Check sparsity
   expect_true(sum(network != 0) < nrow(X) * nrow(X))
 
-  # Check diagonal is zero
-  expect_equal(sum(diag(network)), 0)
+  # Check diagonal is zero (convert to matrix for diag)
+  expect_equal(sum(Matrix::diag(network)), 0)
 
   # Check it's a sparse matrix
   expect_s4_class(network, "dgCMatrix")
@@ -42,7 +42,7 @@ test_that("pcNetFast handles symmetric option", {
   rownames(X) <- paste0("gene", 1:nGenes)
   X <- X[rowSums(X) > 0, ]
 
-  network <- pcNetFast(X, nComp = 3, symmetric = TRUE, verbose = FALSE)
+  network <- scTenifoldKnk::pcNetFast(X, nComp = 3, symmetric = TRUE, verbose = FALSE)
 
   # Check symmetry
   expect_equal(as.matrix(network), t(as.matrix(network)), tolerance = 1e-10)
@@ -53,8 +53,8 @@ test_that("pcNetFast input validation works", {
   rownames(X) <- paste0("gene", 1:10)
 
   # Test nComp too large
-  expect_error(pcNetFast(X, nComp = 15), "nComp should be")
+  expect_error(scTenifoldKnk::pcNetFast(X, nComp = 15), "nComp should be")
 
   # Test nComp too small
-  expect_error(pcNetFast(X, nComp = 1), "nComp should be")
+  expect_error(scTenifoldKnk::pcNetFast(X, nComp = 1), "nComp should be")
 })

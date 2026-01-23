@@ -8,7 +8,7 @@ test_that("makeNetworksFast produces correct number of networks", {
   rownames(X) <- paste0("gene", 1:nGenes)
   X <- X[rowSums(X) > 0, ]
 
-  networks <- makeNetworksFast(X,
+  networks <- scTenifoldKnk::makeNetworksFast(X,
     nNet = 5, nCells = 100, nComp = 3,
     nCores = 1, verbose = FALSE
   )
@@ -29,7 +29,7 @@ test_that("makeNetworksFast parallel vs sequential gives same results", {
 
   # Sequential
   set.seed(456)
-  nets_seq <- makeNetworksFast(X,
+  nets_seq <- scTenifoldKnk::makeNetworksFast(X,
     nNet = 3, nCells = 100, nComp = 3,
     nCores = 1, verbose = FALSE, seed = 456
   )
@@ -37,7 +37,7 @@ test_that("makeNetworksFast parallel vs sequential gives same results", {
   # Parallel (if cores available)
   if (parallel::detectCores() > 1) {
     set.seed(456)
-    nets_par <- makeNetworksFast(X,
+    nets_par <- scTenifoldKnk::makeNetworksFast(X,
       nNet = 3, nCells = 100, nComp = 3,
       nCores = 2, verbose = FALSE, seed = 456
     )

@@ -1,32 +1,25 @@
 #' @export makeNetworksFast
-#' @importFrom Matrix Matrix
-#' @importFrom parallel detectCores makeCluster clusterExport parLapply stopCluster
-#' @title Optimized parallel construction of multiple gene regulatory networks
+#' @importFrom Matrix Matrix rowSums
+#' @importFrom parallel detectCores makeCluster clusterExport parLapply stopCluster clusterEvalQ
+#' @title Construction of multiple gene regulatory networks
 #' @description Computes multiple gene regulatory networks from random subsamples of cells using
-#' optimized principal component regression with parallel processing. This function achieves
-#' 8-10x speedup through parallelization and 30-50x speedup from the optimized pcNetFast algorithm.
+#' principal component regression. Supports both sequential and parallel processing.
 #' @param X A filtered and normalized gene expression matrix with cells as columns and genes as rows.
-#' @param nNet An integer value. The number of networks based on principal components regression to generate.
-#' @param nCells An integer value. The number of cells to subsample each time to generate a network.
-#' @param nComp An integer value. The number of principal components in PCA to generate the networks.
-#' Should be greater than 2 and lower than the total number of genes.
-#' @param scaleScores A boolean value (TRUE/FALSE), if TRUE, the weights will be normalized such that
-#' the maximum absolute value is 1.
-#' @param symmetric A boolean value (TRUE/FALSE), if TRUE, the weights matrix returned will be symmetric.
-#' @param q A decimal value between 0 and 1. Represent the cut-off threshold of top q% relationships to be returned.
-#' @param nCores An integer value. Defines the number of cores to be used for parallel processing.
-#' Default is to use all available cores minus 1.
-#' @param verbose A boolean value (TRUE/FALSE), if TRUE, progress information is shown.
+#' @param nNet An integer value. The number of networks to generate (default: 10).
+#' @param nCells An integer value. The number of cells to subsample for each network (default: 500).
+#' @param nComp An integer value. The number of principal components (default: 3).
+#' Must be >= 2 and < number of genes.
+#' @param scaleScores Logical. If TRUE, normalize weights so max absolute value is 1.
+#' @param symmetric Logical. If TRUE, return symmetric network matrices.
+#' @param q A decimal value between 0 and 1. Quantile threshold for edge filtering.
+#' @param nCores An integer value. Number of cores for parallel processing. Set to 1 for sequential.
+#' Default: detectCores() - 1.
+#' @param verbose Logical. If TRUE, print progress information.
 #' @param seed An integer value. Random seed for reproducibility. If NULL, no seed is set.
-#' @return A list with nNet gene regulatory networks in dgCMatrix format. Each one computed from a
-#' randomly selected subsample of nCells cells.
-#' @details This function parallelizes the network construction process by:
-#' \enumerate{
-#' \item Creating multiple random subsamples of cells (with replacement)
-#' \item Building each network independently in parallel using pcNetFast
-#' \item Combining results into a list
-#' }
-#' The parallelization is safe because each network is constructed independently.
+#' @return A list of nNet gene regulatory networks in dgCMatrix format.
+#' @details Each network is constructed independently from a random subsample of cells,
+#' making the process embarrassingly parallel. The function automatically chooses
+#' sequential processing for small datasets where parallel overhead exceeds benefits.
 #' @examples
 #' library(scTenifoldKnk)
 #'
@@ -41,15 +34,11 @@
 #' # Quality control
 #' X <- X[rowSums(X) > 0, ]
 #'
-#' # Generate multiple networks in parallel
+#' # Generate networks (sequential for small data)
 #' networks <- makeNetworksFast(
 #'   X = X, nNet = 10, nCells = 500, nComp = 3,
 #'   scaleScores = TRUE, symmetric = FALSE, q = 0.95
 #' )
-#'
-#' # Check results
-#' length(networks)
-#' networks[[1]][1:10, 1:10]
 makeNetworksFast <- function(X,
                              nNet = 10,
                              nCells = 500,
@@ -60,98 +49,94 @@ makeNetworksFast <- function(X,
                              nCores = NULL,
                              verbose = TRUE,
                              seed = 1) {
-  # Input validation
+  # Input validation and coercion
   if (!is.matrix(X) && !inherits(X, "dgCMatrix")) {
     X <- as.matrix(X)
   }
 
   geneList <- rownames(X)
   if (is.null(geneList) || length(geneList) == 0) {
-    geneList <- paste0("gene", 1:nrow(X))
+    geneList <- paste0("gene", seq_len(nrow(X)))
     rownames(X) <- geneList
   }
   nGenes <- nrow(X)
   nCol <- ncol(X)
 
+  # Validate parameters
   if (nGenes == 0) {
     stop("No genes in input matrix")
   }
-
   if (nCells > nCol) {
-    warning(sprintf("nCells (%d) is larger than available cells (%d), using all cells", nCells, nCol))
+    warning(sprintf(
+      "nCells (%d) > available cells (%d), using all cells",
+      nCells, nCol
+    ))
     nCells <- nCol
   }
-
   if (nComp >= nGenes) {
-    stop("nComp should be lower than the total number of genes")
+    stop("nComp must be less than the number of genes")
   }
-
   if (nComp < 2) {
-    stop("nComp should be greater or equal than 2")
+    stop("nComp must be >= 2")
   }
 
-  # Set up parallel processing
+  # Determine number of cores
   if (is.null(nCores)) {
     nCores <- max(1, parallel::detectCores() - 1)
   }
+  nCores <- min(nCores, nNet)  # No point having more cores than networks
 
-  # Limit nCores to nNet (no point in having more cores than networks)
-  nCores <- min(nCores, nNet)
-
-  # Smart parallelization: only use parallel for large datasets
-  # Parallel overhead ~1.5s, single network ~0.003*nGenes seconds
-  # Break-even: 1.5s / (0.003*nGenes * nNet) > 1/nCores
-  # Simplified: use parallel if nGenes > 200 OR nNet > 20
+  # Smart parallelization decision
+  # Parallel overhead ~1-2s; only worthwhile for larger jobs
   use_parallel <- (nGenes > 200 || nNet > 20) && nCores > 1
 
   if (!use_parallel && nCores > 1) {
     if (verbose) {
-      cat(sprintf("Note: Using sequential processing (dataset too small for parallel overhead)\n"))
+      cat("Using sequential processing (dataset size doesn't warrant parallel overhead)\n")
     }
     nCores <- 1
   }
 
   if (verbose) {
-    cat(sprintf("Generating %d networks using %d cores...\n", nNet, nCores))
     cat(sprintf(
-      "Each network: %d genes, %d cells (subsampled), %d components\n",
-      nGenes, nCells, nComp
+      "Generating %d networks (%d genes, %d cells/network, %d PCs)...\n",
+      nNet, nGenes, nCells, nComp
     ))
   }
 
-  # Set seed for reproducibility
+  # Set seed for reproducibility BEFORE generating samples
   if (!is.null(seed)) {
     set.seed(seed)
   }
 
-  # Pre-generate all random samples to ensure reproducibility
-  cell_samples <- lapply(1:nNet, function(i) {
-    sample(x = 1:nCol, size = nCells, replace = TRUE)
+  # Pre-generate all random samples (ensures reproducibility)
+  cell_samples <- lapply(seq_len(nNet), function(i) {
+    sample(x = seq_len(nCol), size = nCells, replace = TRUE)
   })
 
-  # Convert X to matrix for parallel processing (avoid sparse matrix serialization issues)
+  # Convert to dense matrix for processing
   X_matrix <- as.matrix(X)
 
-  # Function to build one network
+  # Network builder function (defined once, used in both paths)
   buildOneNetwork <- function(net_idx) {
-    # Select cells for this network
     selected_cells <- cell_samples[[net_idx]]
     X_sub <- X_matrix[, selected_cells, drop = FALSE]
 
-    # Filter out genes with zero expression in this subsample
-    gene_sums <- Matrix::rowSums(X_sub)
+    # Filter zero-expression genes in this subsample
+    gene_sums <- rowSums(X_sub)
     X_sub <- X_sub[gene_sums > 0, , drop = FALSE]
 
     if (nrow(X_sub) < nComp + 1) {
       warning(sprintf(
-        "Network %d has too few genes (%d) for nComp=%d, skipping",
+        "Network %d: too few genes (%d) for nComp=%d, skipping",
         net_idx, nrow(X_sub), nComp
       ))
       return(NULL)
     }
 
-    # Build network using optimized function
-    net <- pcNetFast(X_sub,
+    # Build network
+    net <- pcNetFast(
+      X_sub,
       nComp = nComp,
       scaleScores = scaleScores,
       symmetric = symmetric,
@@ -160,7 +145,7 @@ makeNetworksFast <- function(X,
     )
 
     # Expand to full gene set
-    O <- matrix(data = 0, nrow = nGenes, ncol = nGenes)
+    O <- matrix(0, nrow = nGenes, ncol = nGenes)
     rownames(O) <- colnames(O) <- geneList
     active_genes <- rownames(net)
     O[active_genes, active_genes] <- as.matrix(net)
@@ -169,64 +154,54 @@ makeNetworksFast <- function(X,
     return(O)
   }
 
-  # Build networks in parallel or sequentially
+  # Build networks
   if (nCores > 1 && nNet > 1) {
-    if (verbose) {
-      cat("Building networks in parallel...\n")
-    }
+    if (verbose) cat(sprintf("Building networks in parallel (%d cores)...\n", nCores))
 
-    # Set up cluster
+    # Set up cluster with proper cleanup on exit
     cl <- parallel::makeCluster(nCores)
+    on.exit(parallel::stopCluster(cl), add = TRUE)  # Ensures cleanup
 
-    # Export necessary objects and functions
-    parallel::clusterExport(cl,
+    # Export to workers
+    parallel::clusterExport(
+      cl,
       varlist = c(
         "X_matrix", "geneList", "nGenes", "nComp",
-        "scaleScores", "symmetric", "q",
-        "cell_samples"
+        "scaleScores", "symmetric", "q", "cell_samples"
       ),
       envir = environment()
     )
 
-    # Load required packages and functions on each worker
+    # Load packages on workers
     parallel::clusterEvalQ(cl, {
       library(Matrix)
       library(RSpectra)
       library(scTenifoldKnk)
     })
 
-    # Build networks in parallel
-    networks <- parallel::parLapply(cl, 1:nNet, buildOneNetwork)
+    # Parallel build
+    networks <- parallel::parLapply(cl, seq_len(nNet), buildOneNetwork)
 
-    # Stop cluster
-    parallel::stopCluster(cl)
   } else {
-    if (verbose) {
-      cat("Building networks sequentially...\n")
-    }
+    if (verbose) cat("Building networks sequentially...\n")
 
-    # Sequential processing
-    networks <- lapply(1:nNet, function(i) {
-      if (verbose) {
-        cat(sprintf("  Network %d/%d\r", i, nNet))
+    networks <- lapply(seq_len(nNet), function(i) {
+      if (verbose && i %% 5 == 1) {
+        cat(sprintf("  Network %d/%d\n", i, nNet))
       }
       buildOneNetwork(i)
     })
-
-    if (verbose) {
-      cat("\n")
-    }
   }
 
-  # Remove NULL networks (if any failed)
-  networks <- networks[!sapply(networks, is.null)]
+  # Remove failed networks
+  null_mask <- sapply(networks, is.null)
+  if (any(null_mask)) {
+    warning(sprintf("%d/%d networks failed to build", sum(null_mask), nNet))
+    networks <- networks[!null_mask]
+  }
 
   if (length(networks) == 0) {
-    stop("All networks failed to build. Check your input data.")
-  }
-
-  if (length(networks) < nNet) {
-    warning(sprintf("Only %d/%d networks were successfully built", length(networks), nNet))
+    stop("All networks failed to build. Check input data and parameters.")
   }
 
   if (verbose) {

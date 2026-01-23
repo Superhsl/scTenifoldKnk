@@ -1,6 +1,6 @@
 #' @export scTenifoldKnk
-#' @title Optimized Virtual Knockout Experiment
-#' @description Performs in-silico gene knockout experiments using optimized algorithms
+#' @title Virtual Knockout Experiment
+#' @description Performs in-silico gene knockout experiments on single-cell gene regulatory networks
 #' @param countMatrix Gene expression count matrix (genes x cells)
 #' @param gKO Gene(s) to knockout
 #' @param qc_mtThreshold Maximum mitochondrial read ratio
@@ -66,7 +66,7 @@ scTenifoldKnk <- function(countMatrix,
   }
 
   # Network construction
-  if (verbose) cat("Step 2/6: Constructing gene regulatory networks (optimized & parallelized)...\n")
+  if (verbose) cat("Step 2/6: Constructing gene regulatory networks...\n")
   WT <- makeNetworksFast(
     X = countMatrix,
     q = nc_q,

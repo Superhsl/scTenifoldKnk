@@ -2,12 +2,7 @@
 #include <vector>
 #include <random>
 #include <cmath>
-#include "utils/parallel_utils.h"
 #include "utils/matrix_ops.h"
-
-#ifdef _OPENMP
-#include <omp.h>
-#endif
 
 // [[Rcpp::depends(RcppEigen)]]
 
@@ -16,9 +11,8 @@ using Eigen::MatrixXd;
 using Eigen::VectorXd;
 using Eigen::SparseMatrix;
 
-// Fast PCA using partial eigenvalue decomposition
-// Optimized: Only compute the top k eigenvalues/eigenvectors we need
-// This is much faster than full decomposition for small k
+// PCA using eigenvalue decomposition
+// Computes top k principal components from centered data
 MatrixXd fastPCA(const MatrixXd& X, int nComp) {
     int nRows = static_cast<int>(X.rows());
     int nCols = static_cast<int>(X.cols());
@@ -27,112 +21,89 @@ MatrixXd fastPCA(const MatrixXd& X, int nComp) {
         nComp = std::min(nRows, nCols);
     }
     
-    // Center the data
+    // Center the data (subtract column means)
     VectorXd colMeans = X.colwise().mean();
     MatrixXd Xc = X.rowwise() - colMeans.transpose();
     
-    // Compute covariance matrix X^T * X
-    MatrixXd Cov = (Xc.transpose() * Xc) / (nRows - 1);
+    // Compute covariance matrix: Cov = X^T * X / (n-1)
+    // Use noalias() to avoid temporary allocation
+    MatrixXd Cov(nCols, nCols);
+    Cov.noalias() = (Xc.transpose() * Xc) / (nRows - 1);
     
     // Add small regularization for numerical stability
     const double regularization = 1e-10;
     Cov.diagonal().array() += regularization;
     
-    // For small nComp relative to matrix size, use partial decomposition
-    // For large nComp, full decomposition might be faster
+    // Eigenvalue decomposition of covariance matrix
+    Eigen::SelfAdjointEigenSolver<MatrixXd> es(Cov);
+    
     MatrixXd eigenvectors;
     
-    if (nComp < nCols / 2) {
-        // Partial eigenvalue decomposition using SelfAdjointEigenSolver with computeEigenvectors
-        // Note: Eigen doesn't have built-in Lanczos/Arnoldi for partial eigensolution
-        // For true partial computation, would need Spectra library
-        // For now, compute all but only use top k (still faster than before due to optimization flags)
-        Eigen::SelfAdjointEigenSolver<MatrixXd> es(Cov, Eigen::ComputeEigenvectors);
-        
-        // Check convergence
-        if (es.info() != Eigen::Success) {
-            Rcout << "  Warning: Eigenvalue decomposition did not converge, using fallback" << std::endl;
-            // Fallback: use SVD
-            Eigen::JacobiSVD<MatrixXd> svd(Cov, Eigen::ComputeThinV);
-            eigenvectors = svd.matrixV().rightCols(nComp);
-        } else {
-            // Get top nComp eigenvectors (largest eigenvalues are at the end)
-            eigenvectors = es.eigenvectors().rightCols(nComp);
-            
-            // Check eigenvalues are positive (covariance matrix should be PSD)
-            Eigen::VectorXd eigenvalues = es.eigenvalues().tail(nComp);
-            if (eigenvalues.minCoeff() < -1e-6) {
-                Rcout << "  Warning: Negative eigenvalues detected, matrix may not be PSD" << std::endl;
-            }
-        }
+    if (es.info() != Eigen::Success) {
+        // Fallback: use SVD (more stable but slower)
+        Eigen::JacobiSVD<MatrixXd> svd(Xc, Eigen::ComputeThinV);
+        eigenvectors = svd.matrixV().leftCols(nComp);
     } else {
-        // For large nComp, full decomposition
-        Eigen::SelfAdjointEigenSolver<MatrixXd> es(Cov);
+        // Get top nComp eigenvectors (largest eigenvalues are at the END)
         eigenvectors = es.eigenvectors().rightCols(nComp);
-        
-        // Check eigenvalues
-        Eigen::VectorXd eigenvalues = es.eigenvalues().tail(nComp);
-        if (eigenvalues.minCoeff() < -1e-6) {
-            Rcout << "  Warning: Negative eigenvalues in covariance matrix" << std::endl;
-        }
     }
     
-    // Project data onto principal components
-    MatrixXd PC = Xc * eigenvectors;
+    // Project data onto principal components: PC = Xc * V
+    MatrixXd PC(nRows, nComp);
+    PC.noalias() = Xc * eigenvectors;
     
     return PC;
 }
 
-// Optimized batch principal component regression
-// Key optimization: Compute all gene weights in ONE matrix operation
+// Batch principal component regression
+// Computes gene regulatory network from expression data and PC scores
+// 
+// Mathematical basis:
+// For each gene g, we compute regression coefficients β_g = (PC^T PC)^{-1} PC^T y_g
+// The network weight W[i,j] represents the shared variance between genes i and j
+// through the principal component space.
 MatrixXd batchPCRegression(
-    const MatrixXd& Y,     // nGenes x nCells
-    const MatrixXd& PC     // nCells x nComp
+    const MatrixXd& Y,     // nGenes x nCells (gene expression)
+    const MatrixXd& PC     // nCells x nComp (PC scores)
 ) {
+    const int nGenes = static_cast<int>(Y.rows());
     const int nCells = static_cast<int>(Y.cols());
     const int nComp = static_cast<int>(PC.cols());
     
     if (nCells != static_cast<int>(PC.rows())) {
-        stop("Dimension mismatch: Y cols != PC rows");
+        stop("Dimension mismatch: Y cols (%d) != PC rows (%d)", nCells, static_cast<int>(PC.rows()));
     }
     
-    // Step 1: Compute (PC^T * PC)^-1 (only once!)
-    // This is the key optimization - avoid computing this for each gene
-    MatrixXd PtP = PC.transpose() * PC;  // nComp x nComp (small!)
+    // Step 1: Compute (PC^T * PC)^{-1} ONCE for all genes
+    // This is an nComp x nComp matrix (typically 3x3), very small
+    MatrixXd PtP(nComp, nComp);
+    PtP.noalias() = PC.transpose() * PC;
     
-    // Add small regularization for numerical stability
+    // Add Tikhonov regularization for numerical stability
     const double regularization = 1e-8;
     PtP.diagonal().array() += regularization;
     
-    // Use LLT decomposition for positive definite matrix (faster than inverse)
+    // Use Cholesky decomposition (LLT) for positive definite matrix
     Eigen::LLT<MatrixXd> llt(PtP);
     MatrixXd PtP_inv;
     
     if (llt.info() == Eigen::Success) {
-        // LLT succeeded, use it (fastest)
         PtP_inv = llt.solve(MatrixXd::Identity(nComp, nComp));
     } else {
-        // LLT failed, fallback to pseudo-inverse (stable but slower)
+        // Fallback: use complete orthogonal decomposition (handles rank-deficient)
         PtP_inv = PtP.completeOrthogonalDecomposition().pseudoInverse();
     }
     
-    // Step 2: Compute Y * PC in one shot
-    // (nGenes x nCells) * (nCells x nComp) = (nGenes x nComp)
-    MatrixXd YPC = Y * PC;
+    // Step 2: Compute regression coefficients for ALL genes simultaneously
+    // β = Y * PC * (PC^T PC)^{-1}
+    // Dimensions: (nGenes x nCells) * (nCells x nComp) * (nComp x nComp) = (nGenes x nComp)
+    MatrixXd W(nGenes, nComp);
+    W.noalias() = Y * PC * PtP_inv;
     
-    // Step 3: Compute weight matrix W = YPC * (PtP)^-1
-    // (nGenes x nComp) * (nComp x nComp) = (nGenes x nComp)
-    MatrixXd W = YPC * PtP_inv;
-    
-    // Step 4: Compute network adjacency = W * W^T
-    // This represents gene-gene correlations through PC space
-    // (nGenes x nComp) * (nComp x nGenes) = (nGenes x nGenes)
-    
-    // Optimized: Use Eigen's BLAS-accelerated matrix multiplication
-    // Note: W * W^T is mathematically guaranteed to be symmetric
-    // Proof: (W*W^T)^T = (W^T)^T * W^T = W * W^T
-    // No need for manual symmetrization - saves 50% computation time
-    MatrixXd Network;
+    // Step 3: Compute network adjacency matrix
+    // Network[i,j] = W[i,:] · W[j,:] = shared variance through PC space
+    // Mathematically: Network = W * W^T (guaranteed symmetric)
+    MatrixXd Network(nGenes, nGenes);
     Network.noalias() = W * W.transpose();
     
     return Network;
@@ -162,9 +133,6 @@ MatrixXd buildSingleNetwork(
     
     // Apply quantile threshold
     double threshold = matrix_ops::computeQuantile(network, q);
-    
-    // Vectorized threshold application using Eigen array operations
-    // This is faster than loops and automatically optimized
     network = (network.array().abs() >= threshold).select(network, 0.0);
     
     // Scale scores if requested
@@ -187,8 +155,11 @@ MatrixXd buildSingleNetwork(
 //' @param q Quantile threshold for edge filtering
 //' @param scaleScores Whether to scale network weights to [-1, 1]
 //' @param symmetric Whether to make networks symmetric
-//' @param nThreads Number of threads (0 = auto)
-//' @return List of networks
+//' @param nThreads Number of threads (ignored, kept for API compatibility)
+//' @return List of sparse network matrices
+//' @details Each network is built from a random subsample of cells using
+//' principal component regression. Networks are returned as sparse matrices
+//' for memory efficiency.
 //' @export
 // [[Rcpp::export]]
 List makeNetworksCpp(
@@ -199,22 +170,19 @@ List makeNetworksCpp(
     double q = 0.9,
     bool scaleScores = true,
     bool symmetric = false,
-    int nThreads = 0
+    int nThreads = 0  // Ignored - no OpenMP
 ) {
     // Convert SEXP to Eigen matrix
-    // Check if sparse first to avoid unnecessary memory allocation
     MatrixXd countMatrix;
     
     if (Rf_isS4(countMatrixSEXP)) {
-        // Input is sparse matrix - convert to dense for computation
-        // Note: PCA requires dense matrix, so conversion is necessary here
+        // Input is sparse matrix - convert to dense for PCA
         Eigen::SparseMatrix<double> sparseMat = as<Eigen::SparseMatrix<double>>(countMatrixSEXP);
         countMatrix = MatrixXd(sparseMat);
-        Rcout << "  Converted sparse input (" << sparseMat.nonZeros() << " non-zeros) to dense for PCA" << std::endl;
     } else {
-        // Input is already dense
         countMatrix = as<MatrixXd>(countMatrixSEXP);
     }
+    
     // Validate inputs
     int nGenes = static_cast<int>(countMatrix.rows());
     int totalCells = static_cast<int>(countMatrix.cols());
@@ -231,64 +199,46 @@ List makeNetworksCpp(
     if (nCells < 1) {
         stop("nCells must be at least 1");
     }
-    if (nComp < 1) {
-        stop("nComp must be at least 1");
+    if (nComp < 2) {
+        stop("nComp must be at least 2");
     }
-    if (nComp > std::min(nGenes, nCells)) {
-        Rcout << "  Warning: nComp (" << nComp << ") > min(nGenes, nCells), reducing to " 
-              << std::min(nGenes, nCells) - 1 << std::endl;
+    if (nComp >= std::min(nGenes, nCells)) {
         nComp = std::min(nGenes, nCells) - 1;
     }
     if (q < 0.0 || q > 1.0) {
         stop("q must be between 0 and 1");
     }
-    
     if (nCells > totalCells) {
         nCells = totalCells;
     }
     
-    // Set number of threads
-    int actualThreads = parallel::getNumThreads(nThreads);
-    parallel::setNumThreads(actualThreads);
+    // Pre-allocate storage for networks (avoids repeated R memory allocation)
+    std::vector<SparseMatrix<double>> networkVec(nNet);
     
-    Rcout << "Building " << nNet << " networks using " << actualThreads << " threads..." << std::endl;
-    Rcout << "  Input: " << nGenes << " genes x " << totalCells << " cells" << std::endl;
-    Rcout << "  Subsampling: " << nCells << " cells per network" << std::endl;
-    
-    // Store networks
-    List networks(nNet);
-    
-    // Build networks - use parallel if OpenMP available
-    #ifdef _OPENMP
-    #pragma omp parallel for schedule(dynamic)
-    #endif
+    // Build networks sequentially
     for (int i = 0; i < nNet; ++i) {
-        // Each network gets different random seed
+        // Each network gets different random seed for reproducibility
         unsigned int seed = 1 + i;
         
-        // Build network (internally parallelized at gene level)
+        // Build single network
         MatrixXd network = buildSingleNetwork(
             countMatrix, nCells, nComp, q, scaleScores, seed
         );
         
-        // Make symmetric if requested
+        // Make symmetric if requested: (A + A^T) / 2
         if (symmetric) {
-            network = (network + network.transpose()) / 2.0;
+            network = (network + network.transpose()) * 0.5;
         }
         
-        // Store as sparse matrix (memory efficient)
-        SparseMatrix<double> sparseNet = matrix_ops::densityToSparse(network, 1e-10);
-        
-        #ifdef _OPENMP
-        #pragma omp critical
-        #endif
-        {
-            networks[i] = sparseNet;
-            Rcout << "  Network " << (i+1) << "/" << nNet << " completed" << std::endl;
-        }
+        // Convert to sparse and store
+        networkVec[i] = matrix_ops::densityToSparse(network, 1e-10);
     }
     
-    Rcout << "All networks built successfully!" << std::endl;
+    // Convert std::vector to R List (single-threaded, safe)
+    List networks(nNet);
+    for (int i = 0; i < nNet; ++i) {
+        networks[i] = networkVec[i];
+    }
     
     return networks;
 }

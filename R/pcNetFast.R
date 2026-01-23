@@ -2,10 +2,10 @@
 #' @importFrom RSpectra svds
 #' @importFrom Matrix Matrix
 #' @importFrom stats quantile
-#' @title Optimized gene regulatory network construction using principal component regression
-#' @description This is an optimized version of pcNet that maintains scientific accuracy while improving performance
-#' through efficient matrix operations, caching, and vectorization. Unlike naive batch approaches, this version
-#' uses smart caching of SVD results to avoid redundant computations while maintaining leave-one-out accuracy.
+#' @title Gene regulatory network construction using principal component regression
+#' @description Constructs a gene regulatory network using principal component regression.
+#' Uses efficient matrix operations and supports both accurate (leave-one-out) and 
+#' approximate (global PCA) methods.
 #' @param X A filtered and normalized gene expression matrix with cells as columns and genes as rows.
 #' @param nComp An integer value. The number of principal components in PCA to generate the networks.
 #' @param scaleScores A boolean value (TRUE/FALSE), if TRUE, the weights will be normalized such that
@@ -16,17 +16,9 @@
 #' @param nCores An integer value. Defines the number of cores for BLAS operations (not for parallelization).
 #' @param use_approximate Logical. If TRUE, uses approximate method (faster but less accurate). Default FALSE.
 #' @return A gene regulatory network in dgCMatrix format.
-#' @details This optimized implementation uses several strategies:
-#' \enumerate{
-#' \item Pre-standardization of the data matrix
-#' \item Vectorized operations where possible
-#' \item Efficient sparse matrix operations
-#' \item Smart memory management
-#' }
-#'
-#' When use_approximate=TRUE, it uses a global PCA approach (30-50x faster but correlation ~0.76 with original).
-#' When use_approximate=FALSE (default), it maintains leave-one-out accuracy with modest speedup (5-10x) through
-#' efficient matrix operations.
+#' @details When use_approximate=FALSE (default), the function performs leave-one-out
+#' principal component regression for each gene, which provides accurate network inference.
+#' When use_approximate=TRUE, it uses a global PCA approach which is faster but less accurate.
 #' @examples
 #' library(scTenifoldKnk)
 #'

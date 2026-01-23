@@ -5,22 +5,19 @@
 #include <vector>
 #include <algorithm>
 #include <random>
-
-#ifdef _OPENMP
-#include <omp.h>
-#endif
+#include <cmath>
 
 // [[Rcpp::depends(RcppEigen)]]
 
 namespace matrix_ops {
 
-// Compute quantile threshold
-// Optimized: Use nth_element instead of full sort (O(n) vs O(n log n))
+// Compute quantile threshold using partial sorting
+// Complexity: O(n) average case using nth_element
 inline double computeQuantile(const Eigen::MatrixXd& X, double q) {
-    std::vector<double> values;
-    values.reserve(X.size());
-    
     // Collect non-zero absolute values
+    std::vector<double> values;
+    values.reserve(X.size() / 4);  // Estimate ~25% non-zero
+    
     const double* data = X.data();
     const int total_size = static_cast<int>(X.size());
     
@@ -34,31 +31,30 @@ inline double computeQuantile(const Eigen::MatrixXd& X, double q) {
     if (values.empty()) return 0.0;
     if (values.size() == 1) return values[0];
     
-    // Use nth_element for O(n) complexity instead of O(n log n) sort
-    size_t idx = static_cast<size_t>(q * values.size());
-    if (idx >= values.size()) idx = values.size() - 1;
-    if (idx == 0) idx = 0;
+    // Compute quantile index
+    size_t idx = static_cast<size_t>(q * (values.size() - 1));
+    idx = std::min(idx, values.size() - 1);
     
-    // Partial sort: elements before idx are <= values[idx]
+    // Use nth_element for O(n) partial sorting
     std::nth_element(values.begin(), values.begin() + idx, values.end());
     
     return values[idx];
 }
 
-// Convert dense to sparse matrix with threshold
+// Convert dense matrix to sparse with threshold filtering
 inline Eigen::SparseMatrix<double> densityToSparse(
     const Eigen::MatrixXd& dense,
     double threshold
 ) {
-    std::vector<Eigen::Triplet<double>> triplets;
     int nRows = static_cast<int>(dense.rows());
     int nCols = static_cast<int>(dense.cols());
     
-    // Estimate non-zeros
-    triplets.reserve(nRows * nCols / 10);
+    std::vector<Eigen::Triplet<double>> triplets;
+    triplets.reserve(nRows * nCols / 10);  // Conservative estimate
     
-    for (int i = 0; i < nRows; ++i) {
-        for (int j = 0; j < nCols; ++j) {
+    // Column-major traversal for better cache performance with Eigen's default storage
+    for (int j = 0; j < nCols; ++j) {
+        for (int i = 0; i < nRows; ++i) {
             double val = dense(i, j);
             if (std::abs(val) >= threshold) {
                 triplets.emplace_back(i, j, val);
@@ -73,8 +69,8 @@ inline Eigen::SparseMatrix<double> densityToSparse(
     return sparse;
 }
 
-// Random subsample columns (cells) - optimized version
-// Uses reservoir sampling for O(nSamples) instead of O(nCols) complexity
+// Random subsample columns using reservoir sampling
+// Complexity: O(nCols) time, O(nSamples) space
 template<typename MatrixType>
 MatrixType subsampleColumns(
     const MatrixType& X,
@@ -82,33 +78,33 @@ MatrixType subsampleColumns(
     unsigned int seed = 42
 ) {
     int nCols = static_cast<int>(X.cols());
-    if (nSamples >= nCols) return X;
     
-    // Optimized: Only generate nSamples random indices instead of shuffling all nCols
-    std::vector<int> indices;
-    indices.reserve(nSamples);
+    if (nSamples >= nCols) {
+        return X;  // Return copy if requesting all columns
+    }
     
+    // Reservoir sampling algorithm (Vitter, 1985)
+    std::vector<int> indices(nSamples);
     std::mt19937 gen(seed);
     
-    // Use reservoir sampling for efficient random selection
-    // This is O(nSamples) instead of O(nCols)
-    for (int i = 0; i < nCols; ++i) {
-        if (i < nSamples) {
-            // Fill reservoir
-            indices.push_back(i);
-        } else {
-            // Randomly replace elements with decreasing probability
-            std::uniform_int_distribution<> dis(0, i);
-            int j = dis(gen);
-            if (j < nSamples) {
-                indices[j] = i;
-            }
+    // Fill reservoir with first nSamples indices
+    for (int i = 0; i < nSamples; ++i) {
+        indices[i] = i;
+    }
+    
+    // Replace elements with decreasing probability
+    for (int i = nSamples; i < nCols; ++i) {
+        std::uniform_int_distribution<> dis(0, i);
+        int j = dis(gen);
+        if (j < nSamples) {
+            indices[j] = i;
         }
     }
     
-    // Sort indices for better cache locality when accessing columns
+    // Sort for better cache locality during extraction
     std::sort(indices.begin(), indices.end());
     
+    // Extract selected columns
     MatrixType result(X.rows(), nSamples);
     for (int i = 0; i < nSamples; ++i) {
         result.col(i) = X.col(indices[i]);
@@ -117,24 +113,25 @@ MatrixType subsampleColumns(
     return result;
 }
 
-// Scale matrix (z-score normalization by rows)
+// Z-score normalization by rows (in-place)
 inline void scaleRows(Eigen::MatrixXd& X) {
     int nRows = static_cast<int>(X.rows());
-    #ifdef _OPENMP
-    #pragma omp parallel for if(nRows > 100)
-    #endif
+    
     for (int i = 0; i < nRows; ++i) {
         double mean = X.row(i).mean();
-        double stdDev = std::sqrt((X.row(i).array() - mean).square().mean());
+        double variance = (X.row(i).array() - mean).square().sum() / (X.cols() - 1);
+        double stdDev = std::sqrt(variance);
+        
         if (stdDev > 1e-10) {
             X.row(i).array() = (X.row(i).array() - mean) / stdDev;
+        } else {
+            X.row(i).array() = 0.0;  // Zero variance -> set to zero
         }
     }
 }
 
-// Convert dense matrix to sparse (extract non-zero elements)
-// Optimized: Single pass with thread-local storage
-inline Eigen::SparseMatrix<double> denseToSparseOptimized(
+// Dense to sparse conversion with threshold filtering
+inline Eigen::SparseMatrix<double> denseToSparse(
     const Eigen::MatrixXd& dense,
     double threshold = 1e-10
 ) {
@@ -142,55 +139,16 @@ inline Eigen::SparseMatrix<double> denseToSparseOptimized(
     int nCols = static_cast<int>(dense.cols());
     
     std::vector<Eigen::Triplet<double>> triplets;
+    triplets.reserve(nRows * nCols / 4);  // Estimate ~25% non-zero
     
-    // Sequential version for small matrices, parallel for large
-    if (nRows * nCols < 10000) {
-        // Sequential
-        triplets.reserve(nRows * nCols / 4);
+    // Column-major traversal matches Eigen's default storage order
+    for (int j = 0; j < nCols; ++j) {
         for (int i = 0; i < nRows; ++i) {
-            for (int j = 0; j < nCols; ++j) {
-                double val = dense(i, j);
-                if (std::abs(val) >= threshold) {
-                    triplets.emplace_back(i, j, val);
-                }
+            double val = dense(i, j);
+            if (std::abs(val) >= threshold) {
+                triplets.emplace_back(i, j, val);
             }
         }
-    } else {
-        // Parallel with thread-local storage
-        #ifdef _OPENMP
-        #pragma omp parallel
-        {
-            std::vector<Eigen::Triplet<double>> localTriplets;
-            int nThreads = omp_get_num_threads();
-            localTriplets.reserve(nRows * nCols / (4 * nThreads));
-            
-            #pragma omp for collapse(2)
-            for (int i = 0; i < nRows; ++i) {
-                for (int j = 0; j < nCols; ++j) {
-                    double val = dense(i, j);
-                    if (std::abs(val) >= threshold) {
-                        localTriplets.emplace_back(i, j, val);
-                    }
-                }
-            }
-            
-            #pragma omp critical
-            {
-                triplets.insert(triplets.end(), localTriplets.begin(), localTriplets.end());
-            }
-        }
-        #else
-        // Sequential fallback when OpenMP not available
-        triplets.reserve(nRows * nCols / 4);
-        for (int i = 0; i < nRows; ++i) {
-            for (int j = 0; j < nCols; ++j) {
-                double val = dense(i, j);
-                if (std::abs(val) >= threshold) {
-                    triplets.emplace_back(i, j, val);
-                }
-            }
-        }
-        #endif
     }
     
     Eigen::SparseMatrix<double> sparse(nRows, nCols);

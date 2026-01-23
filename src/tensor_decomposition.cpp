@@ -2,51 +2,56 @@
 #include <vector>
 #include <cmath>
 
-#ifdef _OPENMP
-#include <omp.h>
-#endif
-
 // [[Rcpp::depends(RcppEigen)]]
 
 using namespace Rcpp;
 using Eigen::MatrixXd;
 
-// Compute Frobenius norm of difference between tensor and reconstruction
+// Compute relative Frobenius norm error between tensor and CP reconstruction
+// Error = ||X - X_hat||_F / ||X||_F
 double computeReconstructionError(
     const std::vector<MatrixXd>& networks,
-    const MatrixXd& A,  // nGenes x K
-    const MatrixXd& B,  // nGenes x K  
-    const MatrixXd& C   // nNet x K
+    const MatrixXd& A,  // nGenes x K (first mode factor)
+    const MatrixXd& B,  // nGenes x K (second mode factor)
+    const MatrixXd& C   // nNet x K (third mode factor)
 ) {
     int nNet = static_cast<int>(networks.size());
+    int K = static_cast<int>(C.cols());
     double totalError = 0.0;
+    double totalNorm = 0.0;
     
-    #ifdef _OPENMP
-    #pragma omp parallel for reduction(+:totalError)
-    #endif
+    // Precompute rank-one matrices: A_r * B_r^T for each component
+    // This avoids redundant computation in the loop
+    std::vector<MatrixXd> rankOneMatrices(K);
+    for (int r = 0; r < K; ++r) {
+        rankOneMatrices[r].noalias() = A.col(r) * B.col(r).transpose();
+    }
+    
+    // Compute error for each network slice
     for (int k = 0; k < nNet; ++k) {
-        // Reconstruct network k: A * diag(C[k,:]) * B^T
+        // Reconstruct network k: sum_r C[k,r] * A_r * B_r^T
         MatrixXd reconstructed = MatrixXd::Zero(A.rows(), B.rows());
-        
-        for (int r = 0; r < static_cast<int>(C.cols()); ++r) {
-            reconstructed += C(k, r) * A.col(r) * B.col(r).transpose();
+        for (int r = 0; r < K; ++r) {
+            reconstructed.noalias() += C(k, r) * rankOneMatrices[r];
         }
         
-        // Compute squared Frobenius norm of difference
-        double error = (networks[k] - reconstructed).squaredNorm();
-        totalError += error;
+        // Accumulate squared Frobenius norms
+        totalError += (networks[k] - reconstructed).squaredNorm();
+        totalNorm += networks[k].squaredNorm();
     }
     
-    // Relative error
-    double totalNorm = 0.0;
-    for (const auto& net : networks) {
-        totalNorm += net.squaredNorm();
+    // Return relative error
+    if (totalNorm < std::numeric_limits<double>::epsilon()) {
+        return 0.0;  // All-zero tensor
     }
-    
     return std::sqrt(totalError / totalNorm);
 }
 
-// Update one factor matrix in ALS
+// Update one factor matrix in CP-ALS (Alternating Least Squares)
+// Reference: Kolda & Bader (2009). Tensor Decompositions and Applications.
+//
+// For mode-n update: A_n ← X_(n) * (⊙_{m≠n} A_m) * (⊙_{m≠n} A_m^T A_m)^{-1}
+// where ⊙ is the Khatri-Rao product and * is the Hadamard (element-wise) product
 MatrixXd updateFactor(
     const std::vector<MatrixXd>& networks,
     const MatrixXd& A,
@@ -55,111 +60,90 @@ MatrixXd updateFactor(
     int mode  // 0 = update A, 1 = update B, 2 = update C
 ) {
     int K = static_cast<int>(A.cols());
+    int nNet = static_cast<int>(networks.size());
     
     if (mode == 0) {
-        // Update A: solve for A given B, C
-        // Correct CP-ALS: A ← X_(1) * (C ⊙ B) * ((C^T*C) ⊙ (B^T*B))^-1
+        // Update A (first mode factor)
+        // A_new = X_(1) * (C ⊙ B) * ((C^T C) ⊙ (B^T B))^{-1}
         int nGenes = static_cast<int>(A.rows());
         MatrixXd newA = MatrixXd::Zero(nGenes, K);
         
-        // Precompute Gram matrix: (C^T*C) ⊙ (B^T*B) (element-wise product)
+        // Compute Gram matrices
         MatrixXd CtC = C.transpose() * C;  // K x K
         MatrixXd BtB = B.transpose() * B;  // K x K
-        MatrixXd gram = CtC.array() * BtB.array();  // Hadamard product
         
-        // Add regularization for numerical stability
-        gram.diagonal().array() += 1e-10;
+        // Hadamard product of Gram matrices
+        MatrixXd gram = CtC.cwiseProduct(BtB);
+        gram.diagonal().array() += 1e-10;  // Regularization
         
-        // Precompute inverse for thread safety and maximum speed
-        // gram is small (K×K, typically 3×3), inverse is very fast
+        // Compute inverse (K is small, typically 3-5)
         MatrixXd gram_inv = gram.inverse();
         
-        // For each row of A (thread-safe with pre-computed inverse)
-        #ifdef _OPENMP
-        #pragma omp parallel for
-        #endif
+        // Compute each row of A
         for (int i = 0; i < nGenes; ++i) {
-            // Compute right-hand side: sum_k X_k[i,:] * B * diag(C[k,:])
             Eigen::VectorXd rhs = Eigen::VectorXd::Zero(K);
             
-            for (size_t k = 0; k < networks.size(); ++k) {
-                // X_k[i,:] * B weighted by C[k,:]
+            // Sum over all network slices
+            for (int k = 0; k < nNet; ++k) {
+                // For each component r: rhs[r] += C[k,r] * X_k[i,:] · B[:,r]
                 for (int r = 0; r < K; ++r) {
                     rhs(r) += C(k, r) * networks[k].row(i).dot(B.col(r));
                 }
             }
             
-            // Solve: a_i = gram^-1 * rhs (thread-safe matrix multiplication)
-            newA.row(i) = gram_inv * rhs;
+            // Solve: newA[i,:] = gram^{-1} * rhs
+            newA.row(i) = (gram_inv * rhs).transpose();
         }
         
         return newA;
         
     } else if (mode == 1) {
-        // Update B: solve for B given A, C
-        // Correct CP-ALS: B ← X_(2) * (C ⊙ A) * ((C^T*C) ⊙ (A^T*A))^-1
+        // Update B (second mode factor)
+        // B_new = X_(2) * (C ⊙ A) * ((C^T C) ⊙ (A^T A))^{-1}
         int nGenes = static_cast<int>(B.rows());
         MatrixXd newB = MatrixXd::Zero(nGenes, K);
         
-        // Precompute Gram matrix: (C^T*C) ⊙ (A^T*A)
-        MatrixXd CtC = C.transpose() * C;  // K x K
-        MatrixXd AtA = A.transpose() * A;  // K x K
-        MatrixXd gram = CtC.array() * AtA.array();  // Hadamard product
+        // Compute Gram matrices
+        MatrixXd CtC = C.transpose() * C;
+        MatrixXd AtA = A.transpose() * A;
         
-        // Add regularization
+        MatrixXd gram = CtC.cwiseProduct(AtA);
         gram.diagonal().array() += 1e-10;
         
-        // Precompute inverse for thread safety and speed
         MatrixXd gram_inv = gram.inverse();
         
-        #ifdef _OPENMP
-        #pragma omp parallel for
-        #endif
         for (int j = 0; j < nGenes; ++j) {
             Eigen::VectorXd rhs = Eigen::VectorXd::Zero(K);
             
-            for (size_t k = 0; k < networks.size(); ++k) {
-                // X_k[:,j] * A weighted by C[k,:]
+            for (int k = 0; k < nNet; ++k) {
                 for (int r = 0; r < K; ++r) {
                     rhs(r) += C(k, r) * networks[k].col(j).dot(A.col(r));
                 }
             }
             
-            newB.row(j) = gram_inv * rhs;
+            newB.row(j) = (gram_inv * rhs).transpose();
         }
         
         return newB;
         
     } else {
-        // Update C: solve for C given A, B
-        int nNet = static_cast<int>(C.rows());
+        // Update C (third mode factor - network weights)
+        // C_new[k,r] = <X_k, A[:,r] ⊗ B[:,r]> / (||A[:,r]||^2 * ||B[:,r]||^2)
         MatrixXd newC = MatrixXd::Zero(nNet, K);
         
-        // Precompute Gramian (diagonal of Khatri-Rao product's Gram matrix)
-        Eigen::VectorXd gramian_diag(K);
+        // Precompute denominator: ||A[:,r]||^2 * ||B[:,r]||^2 for each r
+        Eigen::VectorXd denom(K);
         for (int r = 0; r < K; ++r) {
-            gramian_diag(r) = A.col(r).squaredNorm() * B.col(r).squaredNorm();
+            denom(r) = A.col(r).squaredNorm() * B.col(r).squaredNorm();
         }
+        denom.array() += 1e-10;  // Regularization
         
-        // Add regularization for numerical stability
-        gramian_diag.array() += 1e-10;
-        
-        #ifdef _OPENMP
-        #pragma omp parallel for
-        #endif
         for (int k = 0; k < nNet; ++k) {
-            const MatrixXd& Xk = networks[k];
-            
-            // Compute right-hand side for each factor
-            Eigen::VectorXd rhs(K);
             for (int r = 0; r < K; ++r) {
-                // Efficient computation: tr(Xk * A_r * B_r^T) = (B_r^T * Xk^T * A_r)
-                rhs(r) = (B.col(r).transpose() * Xk.transpose() * A.col(r))(0);
+                // Compute <X_k, A[:,r] * B[:,r]^T> = B[:,r]^T * X_k^T * A[:,r]
+                double inner = B.col(r).dot(networks[k].transpose() * A.col(r));
+                newC(k, r) = inner / denom(r);
             }
-            
-            // Solve: newC[k, :] * diag(gramian_diag) = rhs
-            // This is equivalent to: newC[k, r] = rhs[r] / gramian_diag[r]
-            newC.row(k) = (rhs.array() / gramian_diag.array()).matrix().transpose();
         }
         
         return newC;
@@ -168,12 +152,19 @@ MatrixXd updateFactor(
 
 //' CP Tensor Decomposition with C++ acceleration
 //' 
-//' @param networkList List of network matrices
-//' @param K Rank of decomposition
-//' @param maxIter Maximum iterations
-//' @param maxError Convergence threshold
-//' @param nDecimal Decimal places for output
-//' @return List with reconstructed network and factors
+//' @param networkList List of network matrices (can be sparse or dense)
+//' @param K Rank of CP decomposition (number of components)
+//' @param maxIter Maximum number of ALS iterations
+//' @param maxError Convergence threshold (relative Frobenius norm)
+//' @param nDecimal Decimal places for rounding output (0 = no rounding)
+//' @return List containing:
+//'   - X: reconstructed average network
+//'   - A, B, C: factor matrices
+//'   - iterations: number of iterations performed
+//'   - error: final reconstruction error
+//' @details Uses Alternating Least Squares (ALS) to compute CP decomposition
+//' of the 3-way tensor formed by stacking network matrices. The reconstructed
+//' network is a weighted average of the network slices.
 //' @export
 // [[Rcpp::export]]
 List tensorDecompositionCpp(
@@ -185,7 +176,7 @@ List tensorDecompositionCpp(
 ) {
     int nNet = static_cast<int>(networkList.size());
     
-    // Validate inputs
+    // Input validation
     if (nNet < 1) {
         stop("networkList must contain at least 1 network");
     }
@@ -199,125 +190,117 @@ List tensorDecompositionCpp(
         stop("maxError must be positive");
     }
     
-    // Convert R list to C++ vector of matrices
-    // Note: We need dense matrices for tensor decomposition operations
+    // Convert R list to C++ vector of dense matrices
     std::vector<MatrixXd> networks(nNet);
-    int totalNonZeros = 0;
-    int totalElements = 0;
     
     for (int i = 0; i < nNet; ++i) {
         SEXP elem = networkList[i];
         
-        // Handle both dense and sparse matrices
         if (Rf_isS4(elem)) {
-            // Sparse matrix - convert to dense for ALS operations
+            // Sparse matrix - convert to dense
             Eigen::SparseMatrix<double> sparse = as<Eigen::SparseMatrix<double>>(elem);
             networks[i] = MatrixXd(sparse);
-            totalNonZeros += static_cast<int>(sparse.nonZeros());
-            totalElements += static_cast<int>(sparse.rows() * sparse.cols());
         } else {
-            // Dense matrix
             networks[i] = as<MatrixXd>(elem);
         }
     }
     
-    if (totalNonZeros > 0) {
-        double sparsity = 100.0 * (1.0 - (double)totalNonZeros / totalElements);
-        Rcout << "  Network sparsity: " << sparsity << "% zeros" << std::endl;
-    }
-    
     int nGenes = static_cast<int>(networks[0].rows());
     
-    // Validate K relative to nGenes
+    // Adjust K if necessary
     if (K >= nGenes) {
-        Rcout << "  Warning: K (" << K << ") >= nGenes (" << nGenes 
-              << "), reducing K to " << (nGenes - 1) << std::endl;
-        K = nGenes - 1;
+        K = std::max(1, nGenes - 1);
     }
     
-    Rcout << "Starting CP decomposition: " << nGenes << " genes, " 
-          << nNet << " networks, rank " << K << std::endl;
+    // Initialize factor matrices with random values using R's RNG
+    // This ensures reproducibility when set.seed() is called in R
+    MatrixXd A(nGenes, K);
+    MatrixXd B(nGenes, K);
+    MatrixXd C(nNet, K);
     
-    // Initialize factor matrices randomly
-    MatrixXd A = MatrixXd::Random(nGenes, K);
-    MatrixXd B = MatrixXd::Random(nGenes, K);
-    MatrixXd C = MatrixXd::Random(nNet, K);
+    // Use R's runif for random initialization
+    for (int i = 0; i < nGenes; ++i) {
+        for (int j = 0; j < K; ++j) {
+            A(i, j) = R::runif(-1.0, 1.0);
+            B(i, j) = R::runif(-1.0, 1.0);
+        }
+    }
+    for (int i = 0; i < nNet; ++i) {
+        for (int j = 0; j < K; ++j) {
+            C(i, j) = R::runif(-1.0, 1.0);
+        }
+    }
     
-    // Normalize
+    // Normalize columns
     for (int k = 0; k < K; ++k) {
-        A.col(k).normalize();
-        B.col(k).normalize();
-        C.col(k).normalize();
+        double normA = A.col(k).norm();
+        double normB = B.col(k).norm();
+        double normC = C.col(k).norm();
+        
+        if (normA > 1e-10) A.col(k) /= normA;
+        if (normB > 1e-10) B.col(k) /= normB;
+        if (normC > 1e-10) C.col(k) /= normC;
     }
     
     double prevError = 1e10;
-    int iter;
+    double currentError = 1e10;
+    int iter = 0;
     
     // ALS iterations
     for (iter = 0; iter < maxIter; ++iter) {
-        // Update each factor matrix
+        // Update each factor matrix in turn
         A = updateFactor(networks, A, B, C, 0);
         B = updateFactor(networks, A, B, C, 1);
         C = updateFactor(networks, A, B, C, 2);
         
-        // Check convergence every 10 iterations
+        // Check convergence every 10 iterations (error computation is expensive)
         if (iter % 10 == 0) {
-            double error = computeReconstructionError(networks, A, B, C);
+            currentError = computeReconstructionError(networks, A, B, C);
             
-            if (iter % 50 == 0) {
-                Rcout << "  Iteration " << iter << ", error: " << error << std::endl;
-            }
-            
-            if (error < maxError) {
-                Rcout << "Converged at iteration " << iter << std::endl;
+            // Convergence check
+            if (currentError < maxError) {
                 break;
             }
             
-            // Early stopping: if error reduction < 0.1%, stop
-            if (iter > 20 && (prevError - error) / prevError < 0.001) {
-                Rcout << "Early stopping at iteration " << iter << std::endl;
+            // Early stopping: error reduction < 0.1%
+            if (iter > 20 && (prevError - currentError) / prevError < 0.001) {
                 break;
             }
             
-            prevError = error;
+            prevError = currentError;
         }
     }
     
-    Rcout << "Reconstructing network..." << std::endl;
-    
-    // Optimized: Precompute all K rank-one matrices A_r * B_r^T
-    // This avoids recomputing them nNet times
+    // Precompute rank-one matrices for reconstruction
     std::vector<MatrixXd> rankOneMatrices(K);
-    
-    #ifdef _OPENMP
-    #pragma omp parallel for if(K > 1)
-    #endif
     for (int r = 0; r < K; ++r) {
         rankOneMatrices[r].noalias() = A.col(r) * B.col(r).transpose();
     }
     
     // Reconstruct weighted average network
+    // CP reconstruction: X_k ≈ Σ_r C[k,r] * a_r * b_r^T
+    // Average over all network slices: avg = (1/nNet) * Σ_k X_k
     MatrixXd reconstructed = MatrixXd::Zero(nGenes, nGenes);
     
     for (int k = 0; k < nNet; ++k) {
-        double weight = C.row(k).sum() / (K * nNet);  // Normalize by K and nNet together
-        
         for (int r = 0; r < K; ++r) {
-            reconstructed.noalias() += weight * C(k, r) * rankOneMatrices[r];
+            // Weight = C[k,r] / nNet (average over network slices)
+            double weight = C(k, r) / static_cast<double>(nNet);
+            reconstructed.noalias() += weight * rankOneMatrices[r];
         }
     }
     
-    // Round to specified decimal places (only if nDecimal >= 4 to avoid losing edges)
-    // Note: nDecimal=3 would zero out values < 0.001, losing network structure
-    if (nDecimal >= 4) {
+    // Optional rounding (preserve precision by default)
+    if (nDecimal > 0 && nDecimal <= 10) {
         double scale = std::pow(10.0, nDecimal);
-        reconstructed = (reconstructed * scale).array().round() / scale;
-        Rcout << "  Rounded to " << nDecimal << " decimal places" << std::endl;
-    } else if (nDecimal > 0 && nDecimal < 4) {
-        Rcout << "  Note: nDecimal=" << nDecimal << " may lose network edges, skipping rounding" << std::endl;
+        reconstructed = (reconstructed.array() * scale).round() / scale;
     }
     
-    Rcout << "Tensor decomposition completed!" << std::endl;
+    // Normalize output to [-1, 1] range
+    double maxAbs = reconstructed.cwiseAbs().maxCoeff();
+    if (maxAbs > 1e-10) {
+        reconstructed /= maxAbs;
+    }
     
     return List::create(
         Named("X") = reconstructed,
@@ -325,6 +308,6 @@ List tensorDecompositionCpp(
         Named("B") = B,
         Named("C") = C,
         Named("iterations") = iter,
-        Named("error") = prevError
+        Named("error") = currentError
     );
 }
