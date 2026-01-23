@@ -1,10 +1,13 @@
 # scTenifoldKnk
 
 <!-- badges: start -->
+[![Website](https://img.shields.io/badge/Website-zaoqu--liu.github.io/scTenifoldKnk-blue?style=for-the-badge&logo=github)](https://zaoqu-liu.github.io/scTenifoldKnk/)
 [![R-Universe](https://zaoqu-liu.r-universe.dev/badges/scTenifoldKnk)](https://zaoqu-liu.r-universe.dev/scTenifoldKnk)
 [![R-CMD-check](https://github.com/Zaoqu-Liu/scTenifoldKnk/workflows/R-CMD-check/badge.svg)](https://github.com/Zaoqu-Liu/scTenifoldKnk/actions)
 [![License: GPL v2](https://img.shields.io/badge/License-GPL%20v2-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html)
 <!-- badges: end -->
+
+**📖 Documentation: <https://zaoqu-liu.github.io/scTenifoldKnk/>**
 
 ## Overview
 
